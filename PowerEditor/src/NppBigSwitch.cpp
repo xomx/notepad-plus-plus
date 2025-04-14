@@ -2695,17 +2695,39 @@ LRESULT Notepad_plus::process(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPa
 				writeLog(nppIssueLog.c_str(), "WM_CLOSE (isEndSessionStarted == true)");
 			}
 
+			// TEMP: DEBUG:
+			wstring issueFn = nppLogNulContentCorruptionIssue;
+			issueFn += L".log";
+			wstring nppIssueLog = nppParam.getUserPath();
+			pathAppend(nppIssueLog, issueFn);
+			string strMsgHeader = "WM_NO_";
+			strMsgHeader += to_string(message) + ": ";
+
 			if (_pPublicInterface->isPrelaunch())
 			{
 				SendMessage(hwnd, WM_SYSCOMMAND, SC_MINIMIZE, 0);
 			}
 			else
 			{
+				// TEMP: DEBUG:
+				if (nppParam.doNppLogNulContentCorruptionIssue() && nppParam.isEndSessionStarted())
+				{
+					string strMsg = strMsgHeader + "before _pluginsManager.notify NPPN_BEFORESHUTDOWN";
+					writeLog(nppIssueLog.c_str(), strMsg.c_str());
+				}
+
 				SCNotification scnN{};
 				scnN.nmhdr.hwndFrom = hwnd;
 				scnN.nmhdr.idFrom = 0;
 				scnN.nmhdr.code = NPPN_BEFORESHUTDOWN;
 				_pluginsManager.notify(&scnN);
+
+				// TEMP: DEBUG:
+				if (nppParam.doNppLogNulContentCorruptionIssue() && nppParam.isEndSessionStarted())
+				{
+					string strMsg = strMsgHeader + "after _pluginsManager.notify NPPN_BEFORESHUTDOWN";
+					writeLog(nppIssueLog.c_str(), strMsg.c_str());
+				}
 
 				if (_pTrayIco)
 					_pTrayIco->doTrayIcon(REMOVE);
@@ -2716,13 +2738,36 @@ LRESULT Notepad_plus::process(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPa
 
 				if (isSnapshotMode)
 				{
+					// TEMP: DEBUG:
+					if (nppParam.doNppLogNulContentCorruptionIssue() && nppParam.isEndSessionStarted())
+					{
+						string strMsg = strMsgHeader + "isSnapshotMode == true, before LockWindowUpdate & MainFileManager.backupCurrentBuffer";
+						writeLog(nppIssueLog.c_str(), strMsg.c_str());
+					}
+
 					::LockWindowUpdate(hwnd);
 					MainFileManager.backupCurrentBuffer();
 				}
 
 				Session currentSession;
 				if (!((nppgui._multiInstSetting == monoInst) && !nppgui._rememberLastSession))
+				{
+					// TEMP: DEBUG:
+					if (nppParam.doNppLogNulContentCorruptionIssue() && nppParam.isEndSessionStarted())
+					{
+						string strMsg = strMsgHeader + "before getCurrentOpenedFiles(currentSession, true)";
+						writeLog(nppIssueLog.c_str(), strMsg.c_str());
+					}
+
 					getCurrentOpenedFiles(currentSession, true);
+				}
+
+				// TEMP: DEBUG:
+				if (nppParam.doNppLogNulContentCorruptionIssue() && nppParam.isEndSessionStarted())
+				{
+					string strMsg = strMsgHeader + "before fileCloseAll";
+					writeLog(nppIssueLog.c_str(), strMsg.c_str());
+				}
 
 				if (nppgui._rememberLastSession)
 				{
@@ -2737,12 +2782,26 @@ LRESULT Notepad_plus::process(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPa
 				if (nppgui._rememberLastSession)
 					_lastRecentFileList.setLock(false);	//only unlock when the session is remembered
 
+				// TEMP: DEBUG:
+				if (nppParam.doNppLogNulContentCorruptionIssue() && nppParam.isEndSessionStarted())
+				{
+					string strMsg = strMsgHeader + "after fileCloseAll";
+					writeLog(nppIssueLog.c_str(), strMsg.c_str());
+				}
+
 				if (!saveProjectPanelsParams()) allClosed = false; //writeProjectPanelsSettings
 				saveFileBrowserParam();
 				saveColumnEditorParams();
 
 				if (!allClosed && !nppParam.isEndSessionCritical())
 				{
+					// TEMP: DEBUG:
+					if (nppParam.doNppLogNulContentCorruptionIssue() && nppParam.isEndSessionStarted())
+					{
+						string strMsg = strMsgHeader + "quitting cancelled by user";
+						writeLog(nppIssueLog.c_str(), strMsg.c_str());
+					}
+
 					// cancelled by user
 					scnN.nmhdr.code = NPPN_CANCELSHUTDOWN;
 					_pluginsManager.notify(&scnN);
@@ -2760,6 +2819,13 @@ LRESULT Notepad_plus::process(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPa
 					return 0; // abort quitting
 				}
 
+				// TEMP: DEBUG:
+				if (nppParam.doNppLogNulContentCorruptionIssue() && nppParam.isEndSessionStarted())
+				{
+					string strMsg = strMsgHeader + "before g_bNppExitFlag.store(true)";
+					writeLog(nppIssueLog.c_str(), strMsg.c_str());
+				}
+
 				// from this point on the Notepad++ exit is inevitable
 				g_bNppExitFlag.store(true); // thread-safe op
 				// currently it is used only in the Notepad_plus::backupDocument worker thread,
@@ -2773,8 +2839,22 @@ LRESULT Notepad_plus::process(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPa
 				if (_configStyleDlg.isCreated() && ::IsWindowVisible(_configStyleDlg.getHSelf()))
 					_configStyleDlg.restoreGlobalOverrideValues();
 
+				// TEMP: DEBUG:
+				if (nppParam.doNppLogNulContentCorruptionIssue() && nppParam.isEndSessionStarted())
+				{
+					string strMsg = strMsgHeader + "before _pluginsManager.notify NPPN_SHUTDOWN";
+					writeLog(nppIssueLog.c_str(), strMsg.c_str());
+				}
+
 				scnN.nmhdr.code = NPPN_SHUTDOWN;
 				_pluginsManager.notify(&scnN);
+
+				// TEMP: DEBUG:
+				if (nppParam.doNppLogNulContentCorruptionIssue() && nppParam.isEndSessionStarted())
+				{
+					string strMsg = strMsgHeader + "after _pluginsManager.notify NPPN_SHUTDOWN";
+					writeLog(nppIssueLog.c_str(), strMsg.c_str());
+				}
 
 				saveScintillasZoom(); 
 				saveGUIParams(); //writeGUIParams writeScintillaParams
@@ -2784,6 +2864,13 @@ LRESULT Notepad_plus::process(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPa
 				// saving config.xml
 				//
 				nppParam.saveConfig_xml();
+
+				// TEMP: DEBUG:
+				if (nppParam.doNppLogNulContentCorruptionIssue() && nppParam.isEndSessionStarted())
+				{
+					string strMsg = strMsgHeader + "after nppParam.saveConfig_xml";
+					writeLog(nppIssueLog.c_str(), strMsg.c_str());
+				}
 
 				//
 				// saving userDefineLang.xml
@@ -2811,6 +2898,13 @@ LRESULT Notepad_plus::process(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPa
 					wstring loadedSessionFilePath = nppParam.getLoadedSessionFilePath();
 					if (!loadedSessionFilePath.empty() && doesFileExist(loadedSessionFilePath.c_str()))
 						nppParam.writeSession(currentSession, loadedSessionFilePath.c_str());
+
+					// TEMP: DEBUG:
+					if (nppParam.doNppLogNulContentCorruptionIssue() && nppParam.isEndSessionStarted())
+					{
+						string strMsg = strMsgHeader + "after saving session";
+						writeLog(nppIssueLog.c_str(), strMsg.c_str());
+					}
 				}
 
 				// write settings on cloud if enabled, if the settings files don't exist
@@ -2826,10 +2920,24 @@ LRESULT Notepad_plus::process(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPa
 							MB_OK | MB_APPLMODAL);
 						nppParam.removeCloudChoice();
 					}
+
+					// TEMP: DEBUG:
+					if (nppParam.doNppLogNulContentCorruptionIssue() && nppParam.isEndSessionStarted())
+					{
+						string strMsg = strMsgHeader + "after saving cloud session";
+						writeLog(nppIssueLog.c_str(), strMsg.c_str());
+					}
 				}
 
 				if (isSnapshotMode)
 					::LockWindowUpdate(NULL);
+
+				// TEMP: DEBUG:
+				if (nppParam.doNppLogNulContentCorruptionIssue() && nppParam.isEndSessionStarted())
+				{
+					string strMsg = strMsgHeader + "before DestroyWindow";
+					writeLog(nppIssueLog.c_str(), strMsg.c_str());
+				}
 
 				//Sends WM_DESTROY, Notepad++ will end
 				::DestroyWindow(hwnd);
