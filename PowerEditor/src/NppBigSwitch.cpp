@@ -1553,7 +1553,8 @@ LRESULT Notepad_plus::process(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPa
 					m = ms[indexMacro].getMacro();
 				}
 
-				_pEditView->execute(SCI_BEGINUNDOACTION);
+				UNDO_ACTION_CREATE_AND_BEGIN(_pEditView);
+
 				for (;;)
 				{
 					macroPlayback(m);
@@ -1596,7 +1597,8 @@ LRESULT Notepad_plus::process(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPa
 						}
 					}
 				}
-				_pEditView->execute(SCI_ENDUNDOACTION);
+
+				UNDO_ACTION_END;
 			}
 			break;
 		}

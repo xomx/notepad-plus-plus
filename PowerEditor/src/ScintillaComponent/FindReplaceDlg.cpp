@@ -2520,9 +2520,9 @@ intptr_t CALLBACK FindReplaceDlg::run_dlgProc(UINT message, WPARAM wParam, LPARA
 
 						nppParamInst._isFindReplacing = true;
 						if (isMacroRecording) saveInMacro(wParam, FR_OP_REPLACE);
-						(*_ppEditView)->execute(SCI_BEGINUNDOACTION);
+						UNDO_ACTION_CREATE_AND_BEGIN(*_ppEditView);
 						int nbReplaced = processAll(ProcessReplaceAll, &_options);
-						(*_ppEditView)->execute(SCI_ENDUNDOACTION);
+						UNDO_ACTION_END;
 						nppParamInst._isFindReplacing = false;
 
 						
@@ -4557,9 +4557,9 @@ void FindReplaceDlg::execSavedCommand(int cmd, uptr_t intValue, const wstring& s
 					case IDREPLACEALL:
 					{
 						nppParamInst._isFindReplacing = true;
-						(*_ppEditView)->execute(SCI_BEGINUNDOACTION);
+						UNDO_ACTION_CREATE_AND_BEGIN(*_ppEditView);
 						int nbReplaced = processAll(ProcessReplaceAll, _env);
-						(*_ppEditView)->execute(SCI_ENDUNDOACTION);
+						UNDO_ACTION_END;
 						nppParamInst._isFindReplacing = false;
 
 						if (nbReplaced == FIND_INVALID_REGULAR_EXPRESSION)

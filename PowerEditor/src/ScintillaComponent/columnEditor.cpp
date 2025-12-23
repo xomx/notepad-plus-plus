@@ -184,7 +184,7 @@ intptr_t CALLBACK ColumnEditorDlg::run_dlgProc(UINT message, WPARAM wParam, LPAR
 
 				case IDOK:
 				{
-					(*_ppEditView)->execute(SCI_BEGINUNDOACTION);
+					UNDO_ACTION_CREATE_AND_BEGIN(*_ppEditView);
 
 					constexpr int stringSize = 1024;
 					wchar_t str[stringSize]{};
@@ -262,7 +262,7 @@ intptr_t CALLBACK ColumnEditorDlg::run_dlgProc(UINT message, WPARAM wParam, LPAR
 						if (initialNumber == -1)
 						{
 							whichFlashRed = sendValidationErrorMessage(IDC_COL_INITNUM_EDIT, colEditParam._formatChoice, str);
-							(*_ppEditView)->execute(SCI_ENDUNDOACTION);
+							UNDO_ACTION_END;
 							return TRUE;
 						}
 
@@ -271,7 +271,7 @@ intptr_t CALLBACK ColumnEditorDlg::run_dlgProc(UINT message, WPARAM wParam, LPAR
 						if (increaseNumber == -1)
 						{
 							whichFlashRed = sendValidationErrorMessage(IDC_COL_INCREASENUM_EDIT, colEditParam._formatChoice, str);
-							(*_ppEditView)->execute(SCI_ENDUNDOACTION);
+							UNDO_ACTION_END;
 							return TRUE;
 						}
 
@@ -280,7 +280,7 @@ intptr_t CALLBACK ColumnEditorDlg::run_dlgProc(UINT message, WPARAM wParam, LPAR
 						if (repeat == -1)
 						{
 							whichFlashRed = sendValidationErrorMessage(IDC_COL_REPEATNUM_EDIT, colEditParam._formatChoice, str);
-							(*_ppEditView)->execute(SCI_ENDUNDOACTION);
+							UNDO_ACTION_END;
 							return TRUE;
 						}
 
@@ -397,7 +397,7 @@ intptr_t CALLBACK ColumnEditorDlg::run_dlgProc(UINT message, WPARAM wParam, LPAR
 							delete[] line;
 						}
 					}
-					(*_ppEditView)->execute(SCI_ENDUNDOACTION);
+					UNDO_ACTION_END;
 					(*_ppEditView)->grabFocus();
 					return TRUE;
 				}

@@ -1259,9 +1259,9 @@ bool Notepad_plus::replaceInOpenedFiles()
 
 			_invisibleEditView.setCurrentBuffer(pBuf);
 
-			_invisibleEditView.execute(SCI_BEGINUNDOACTION);
+			UNDO_ACTION_CREATE_AND_BEGIN(&_invisibleEditView);
 			int nb = _findReplaceDlg.processAll(ProcessReplaceAll, FindReplaceDlg::_env, isEntireDoc);
-			_invisibleEditView.execute(SCI_ENDUNDOACTION);
+			UNDO_ACTION_END;
 			if (nb == FIND_INVALID_REGULAR_EXPRESSION)
 			{
 				hasInvalidRegExpr = true;
@@ -1295,9 +1295,9 @@ bool Notepad_plus::replaceInOpenedFiles()
 
 			_invisibleEditView.setCurrentBuffer(pBuf);
 
-			_invisibleEditView.execute(SCI_BEGINUNDOACTION);
+			UNDO_ACTION_CREATE_AND_BEGIN(&_invisibleEditView);
 			int nb = _findReplaceDlg.processAll(ProcessReplaceAll, FindReplaceDlg::_env, isEntireDoc);
-			_invisibleEditView.execute(SCI_ENDUNDOACTION);
+			UNDO_ACTION_END;
 			if (nb == FIND_INVALID_REGULAR_EXPRESSION)
 			{
 				hasInvalidRegExpr = true;
@@ -1398,7 +1398,7 @@ void Notepad_plus::wsTabConvert(spaceTab whichWay)
 	intptr_t newCurrentPos = 0;
 	vector<intptr_t> folding;
 
-	_pEditView->execute(SCI_BEGINUNDOACTION);
+	UNDO_ACTION_CREATE_AND_BEGIN(_pEditView);
 
 	for (intptr_t idx = startLine; idx < endLineCorrect + 1; ++idx)
 	{
@@ -1608,7 +1608,7 @@ void Notepad_plus::wsTabConvert(spaceTab whichWay)
 	
 	}
 
-	_pEditView->execute(SCI_ENDUNDOACTION);
+	UNDO_ACTION_END;
 
 	if (changeDataCount)
 	{
@@ -2855,7 +2855,7 @@ void Notepad_plus::cutMarkedLines()
 	intptr_t lastLine = _pEditView->lastZeroBasedLineNumber();
 	wstring globalStr = L"";
 
-	_pEditView->execute(SCI_BEGINUNDOACTION);
+	UNDO_ACTION_CREATE_AND_BEGIN(_pEditView);
 	for (intptr_t i = lastLine ; i >= 0 ; i--)
 	{
 		if (bookmarkPresent(i))
@@ -2866,7 +2866,7 @@ void Notepad_plus::cutMarkedLines()
 			deleteMarkedline(i);
 		}
 	}
-	_pEditView->execute(SCI_ENDUNDOACTION);
+	UNDO_ACTION_END;
 	str2Clipboard(globalStr, _pPublicInterface->getHSelf());
 }
 
@@ -2876,13 +2876,13 @@ void Notepad_plus::deleteMarkedLines(bool isMarked)
 
 	intptr_t lastLine = _pEditView->lastZeroBasedLineNumber();
 
-	_pEditView->execute(SCI_BEGINUNDOACTION);
+	UNDO_ACTION_CREATE_AND_BEGIN(_pEditView);
 	for (intptr_t i = lastLine ; i >= 0 ; i--)
 	{
 		if (bookmarkPresent(i) == isMarked)
 			deleteMarkedline(i);
 	}
-	_pEditView->execute(SCI_ENDUNDOACTION);
+	UNDO_ACTION_END;
 }
 
 void Notepad_plus::pasteToMarkedLines()
@@ -2918,7 +2918,7 @@ void Notepad_plus::pasteToMarkedLines()
 	::GlobalUnlock(clipboardData);
 	::CloseClipboard();
 
-	_pEditView->execute(SCI_BEGINUNDOACTION);
+	UNDO_ACTION_CREATE_AND_BEGIN(_pEditView);
 	for (intptr_t i = lastLine ; i >= 0 ; i--)
 	{
 		if (bookmarkPresent(i))
@@ -2926,7 +2926,7 @@ void Notepad_plus::pasteToMarkedLines()
 			replaceMarkedline(i, clipboardStr.c_str());
 		}
 	}
-	_pEditView->execute(SCI_ENDUNDOACTION);
+	UNDO_ACTION_END;
 }
 
 void Notepad_plus::deleteMarkedline(size_t ln)
@@ -5399,16 +5399,16 @@ bool Notepad_plus::doBlockComment(comment_mode currCommentMode)
 		advCommentEnd_length = advCommentEnd.length();
 	}
 
-    size_t selectionStart = _pEditView->execute(SCI_GETSELECTIONSTART);
-    size_t selectionEnd = _pEditView->execute(SCI_GETSELECTIONEND);
-    size_t caretPosition = _pEditView->execute(SCI_GETCURRENTPOS);
-    // checking if caret is located in _beginning_ of selected block
-    bool move_caret = caretPosition < selectionEnd;
+	size_t selectionStart = _pEditView->execute(SCI_GETSELECTIONSTART);
+	size_t selectionEnd = _pEditView->execute(SCI_GETSELECTIONEND);
+	size_t caretPosition = _pEditView->execute(SCI_GETCURRENTPOS);
+	// checking if caret is located in _beginning_ of selected block
+	bool move_caret = caretPosition < selectionEnd;
 	intptr_t selStartLine = _pEditView->execute(SCI_LINEFROMPOSITION, selectionStart);
 	intptr_t selEndLine = _pEditView->execute(SCI_LINEFROMPOSITION, selectionEnd);
 	intptr_t lines = selEndLine - selStartLine;
-    // "caret return" is part of the last selected line
-    if ((lines > 0) && (selectionEnd == static_cast<size_t>(_pEditView->execute(SCI_POSITIONFROMLINE, selEndLine))))
+	// "caret return" is part of the last selected line
+	if ((lines > 0) && (selectionEnd == static_cast<size_t>(_pEditView->execute(SCI_POSITIONFROMLINE, selEndLine))))
 		selEndLine--;
 	// count lines which were un-commented to decide if undoStreamComment() shall be called.
 	int nUncomments = 0;
@@ -5417,9 +5417,9 @@ bool Notepad_plus::doBlockComment(comment_mode currCommentMode)
 	//Some Lexers comment blank lines, per their standards.
 	const bool commentEmptyLines = (buf->getLangType() == L_BAANC);
 
-    _pEditView->execute(SCI_BEGINUNDOACTION);
+	UNDO_ACTION_CREATE_AND_BEGIN(_pEditView);
 
-    for (intptr_t i = selStartLine; i <= selEndLine; ++i)
+	for (intptr_t i = selStartLine; i <= selEndLine; ++i)
 	{
 		size_t lineStart = _pEditView->execute(SCI_POSITIONFROMLINE, i);
 		size_t lineIndent = _pEditView->execute(SCI_GETLINEINDENTPOSITION, i);
@@ -5437,10 +5437,10 @@ bool Notepad_plus::doBlockComment(comment_mode currCommentMode)
 
 		_pEditView->getGenericText(linebuf, linebufferSize, lineIndent, lineEnd);
 
-        wstring linebufStr = linebuf;
+		wstring linebufStr = linebuf;
 		delete [] linebuf;
 
-   		if (currCommentMode != cm_comment) // uncomment/toggle
+		if (currCommentMode != cm_comment) // uncomment/toggle
 		{
 			if (!isSingleLineAdvancedMode)
 			{
@@ -5574,24 +5574,26 @@ bool Notepad_plus::doBlockComment(comment_mode currCommentMode)
 		} // comment/toggle
 	} // for (...)
 
-    if (move_caret)
+	if (move_caret)
 	{
-        // moving caret to the beginning of selected block
-        _pEditView->execute(SCI_GOTOPOS, selectionEnd);
-        _pEditView->execute(SCI_SETCURRENTPOS, selectionStart);
-    }
+		// moving caret to the beginning of selected block
+		_pEditView->execute(SCI_GOTOPOS, selectionEnd);
+		_pEditView->execute(SCI_SETCURRENTPOS, selectionStart);
+	}
 	else
 	{
-        _pEditView->execute(SCI_SETSEL, selectionStart, selectionEnd);
-    }
-    _pEditView->execute(SCI_ENDUNDOACTION);
+		_pEditView->execute(SCI_SETSEL, selectionStart, selectionEnd);
+	}
+
+	UNDO_ACTION_END;
 
 	// undoStreamComment: If there were no block-comments to un-comment try uncommenting of stream-comment.
 	if ((currCommentMode == cm_uncomment) && (nUncomments == 0))
 	{
 		return undoStreamComment(false);
 	}
-    return true;
+
+	return true;
 }
 
 bool Notepad_plus::doStreamComment()
@@ -5666,7 +5668,8 @@ bool Notepad_plus::doStreamComment()
 		selectionEnd = _pEditView->execute(SCI_GETLINEENDPOSITION, selLine);
 	}
 
-	_pEditView->execute(SCI_BEGINUNDOACTION);
+	UNDO_ACTION_CREATE_AND_BEGIN(_pEditView);
+
 	_pEditView->insertGenericTextFrom(selectionStart, start_comment.c_str());
 	selectionEnd += start_comment_length;
 	selectionStart += start_comment_length;
@@ -5682,7 +5685,9 @@ bool Notepad_plus::doStreamComment()
 	{
 		_pEditView->execute(SCI_SETSEL, selectionStart, selectionEnd);
 	}
-	_pEditView->execute(SCI_ENDUNDOACTION);
+
+	UNDO_ACTION_END;
+
 	return true;
 }
 
@@ -8775,7 +8780,7 @@ bool Notepad_plus::undoStreamComment(bool tryBlockComment)
 	size_t start_comment_length = start_comment.length();
 	size_t end_comment_length = end_comment.length();
 
-	_pEditView->execute(SCI_BEGINUNDOACTION);
+	UNDO_ACTION_CREATE_AND_BEGIN(_pEditView);
 
 	// do as long as stream-comments are within selection
 	do
@@ -8860,7 +8865,7 @@ bool Notepad_plus::undoStreamComment(bool tryBlockComment)
 			//-- Finally, if there is no stream-comment, return
 			else
 			{
-				_pEditView->execute(SCI_ENDUNDOACTION);
+				UNDO_ACTION_END;
 				return retVal;
 			}
 		}
@@ -8880,7 +8885,7 @@ bool Notepad_plus::undoStreamComment(bool tryBlockComment)
 			posEndComment -= 1;
 		}
 		//-- Delete end stream-comment string ---------
-		_pEditView->execute(SCI_BEGINUNDOACTION);
+		UNDO_ACTION_BEGIN;
 		_pEditView->execute(SCI_SETSEL, posEndComment, posEndComment + endCommentLength);
 		_pEditView->execute(SCI_REPLACESEL, 0, reinterpret_cast<LPARAM>(""));
 
@@ -8892,7 +8897,7 @@ bool Notepad_plus::undoStreamComment(bool tryBlockComment)
 		//-- Delete starting stream-comment string ---------
 		_pEditView->execute(SCI_SETSEL, posStartComment, posStartComment + startCommentLength);
 		_pEditView->execute(SCI_REPLACESEL, 0, reinterpret_cast<LPARAM>(""));
-		_pEditView->execute(SCI_ENDUNDOACTION);
+		UNDO_ACTION_END;
 
 		//-- Reset selection before calling the routine
 		//-- Determine selection movement

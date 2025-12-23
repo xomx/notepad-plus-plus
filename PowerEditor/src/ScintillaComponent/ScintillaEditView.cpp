@@ -750,7 +750,7 @@ LRESULT CALLBACK ScintillaEditView::ScintillaProc(
 						// then do our job, if it's not column mode
 						if (!isColumnSelection)
 						{
-							pScint->execute(SCI_BEGINUNDOACTION);
+							UNDO_ACTION_CREATE_AND_BEGIN(pScint);
 
 							for (const auto& i : edgeOfEol)
 							{
@@ -764,7 +764,7 @@ LRESULT CALLBACK ScintillaEditView::ScintillaProc(
 								pScint->execute(SCI_SETSELECTIONNEND, i._selIndex, posStart);
 							}
 
-							pScint->execute(SCI_ENDUNDOACTION);
+							UNDO_ACTION_END;
 						}
 
 						return 0;
@@ -3584,12 +3584,11 @@ void ScintillaEditView::setLineIndent(size_t line, size_t indent) const
 	}
 	else
 	{
-		execute(SCI_BEGINUNDOACTION);
+		UNDO_ACTION_CREATE_AND_BEGIN(this);
 		for (size_t i = 0; i < nbSelections; ++i)
 		{
 			LRESULT posStart = execute(SCI_GETSELECTIONNSTART, i);
 			LRESULT posEnd = execute(SCI_GETSELECTIONNEND, i);
-			
 
 			size_t l = execute(SCI_LINEFROMPOSITION, posStart);
 			
@@ -3633,7 +3632,7 @@ void ScintillaEditView::setLineIndent(size_t line, size_t indent) const
 			execute(SCI_SETSELECTIONNSTART, i, posStart);
 			execute(SCI_SETSELECTIONNEND, i, posEnd);
 		}
-		execute(SCI_ENDUNDOACTION);
+		UNDO_ACTION_END;
 	}
 }
 
@@ -3917,7 +3916,7 @@ void ScintillaEditView::convertSelectedTextTo(const TextCase & caseToConvert)
 {
 	if (execute(SCI_GETSELECTIONS) > 1) // Multi-Selection || Column mode
 	{
-        execute(SCI_BEGINUNDOACTION);
+		UNDO_ACTION_CREATE_AND_BEGIN(this);
 
 		ColumnModeInfos cmi = getColumnModeSelectInfo();
 		// The fixup logic needs the selections to be sorted, but that has visible side effects,
@@ -3937,7 +3936,8 @@ void ScintillaEditView::convertSelectedTextTo(const TextCase & caseToConvert)
 			std::reverse(cmi.begin(), cmi.end());
 		setMultiSelections(cmi);
 
-		execute(SCI_ENDUNDOACTION);
+		UNDO_ACTION_END;
+
 		return;
 	}
 
@@ -4996,7 +4996,7 @@ bool ScintillaEditView::pasteToMultiSelection() const
 
 	if (nbSelections >= nbClipboardStr) // enough holes for every insertion, keep holes empty if there are some left
 	{
-		execute(SCI_BEGINUNDOACTION);
+		UNDO_ACTION_CREATE_AND_BEGIN(this);
 		for (size_t i = 0; i < nbClipboardStr; ++i)
 		{
 			LRESULT posStart = execute(SCI_GETSELECTIONNSTART, i);
@@ -5006,14 +5006,14 @@ bool ScintillaEditView::pasteToMultiSelection() const
 			execute(SCI_SETSELECTIONNSTART, i, posStart);
 			execute(SCI_SETSELECTIONNEND, i, posStart);
 		}
-		execute(SCI_ENDUNDOACTION);
+		UNDO_ACTION_END;
 		return true;
 	}
 	else // not enough holes for insertion, every hole has several insertions
 	{
 		size_t nbStr2takeFromClipboard = nbClipboardStr / nbSelections;
 
-		execute(SCI_BEGINUNDOACTION);
+		UNDO_ACTION_CREATE_AND_BEGIN(this);
 		size_t j = 0;
 		for (size_t i = 0; i < nbSelections; ++i)
 		{
@@ -5036,7 +5036,7 @@ bool ScintillaEditView::pasteToMultiSelection() const
 			execute(SCI_SETSELECTIONNSTART, i, posStart);
 			execute(SCI_SETSELECTIONNEND, i, posStart);
 		}
-		execute(SCI_ENDUNDOACTION);
+		UNDO_ACTION_END;
 		return true;
 	}
 

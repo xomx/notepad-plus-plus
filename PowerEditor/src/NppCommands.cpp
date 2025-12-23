@@ -52,7 +52,8 @@ std::mutex command_mutex;
 void Notepad_plus::macroPlayback(Macro macro)
 {
 	_playingBackMacro = true;
-	_pEditView->execute(SCI_BEGINUNDOACTION);
+
+	UNDO_ACTION_CREATE_AND_BEGIN(_pEditView);
 
 	for (Macro::iterator step = macro.begin(); step != macro.end(); ++step)
 	{
@@ -62,7 +63,8 @@ void Notepad_plus::macroPlayback(Macro macro)
 			_findReplaceDlg.execSavedCommand(step->_message, step->_lParameter, string2wstring(step->_sParameter, CP_UTF8));
 	}
 
-	_pEditView->execute(SCI_ENDUNDOACTION);
+	UNDO_ACTION_END;
+
 	_playingBackMacro = false;
 }
 
@@ -106,12 +108,13 @@ void Notepad_plus::command(int id)
 				dateTimeStr += L" ";
 				dateTimeStr += dateStr;
 			}
-			_pEditView->execute(SCI_BEGINUNDOACTION);
+
+			UNDO_ACTION_CREATE_AND_BEGIN(_pEditView);
 
 			_pEditView->execute(SCI_REPLACESEL, 0, reinterpret_cast<LPARAM>(""));
 			_pEditView->addGenericText(dateTimeStr.c_str());
 
-			_pEditView->execute(SCI_ENDUNDOACTION);
+			UNDO_ACTION_END;
 		}
 		break;
 
@@ -123,12 +126,12 @@ void Notepad_plus::command(int id)
 			NppGUI& nppGUI = NppParameters::getInstance().getNppGUI();
 			wstring dateTimeStr = getDateTimeStrFrom(nppGUI._dateTimeFormat, currentTime);
 
-			_pEditView->execute(SCI_BEGINUNDOACTION);
+			UNDO_ACTION_CREATE_AND_BEGIN(_pEditView);
 
 			_pEditView->execute(SCI_REPLACESEL, 0, reinterpret_cast<LPARAM>(""));
 			_pEditView->addGenericText(dateTimeStr.c_str());
 
-			_pEditView->execute(SCI_ENDUNDOACTION);
+			UNDO_ACTION_END;
 		}
 		break;
 
@@ -842,7 +845,8 @@ void Notepad_plus::command(int id)
 								id == IDM_EDIT_SORTLINES_LEXICO_CASE_INSENS_DESCENDING ||
 								id == IDM_EDIT_SORTLINES_LENGTH_DESCENDING;
 
-			_pEditView->execute(SCI_BEGINUNDOACTION);
+			UNDO_ACTION_CREATE_AND_BEGIN(_pEditView);
+
 			std::unique_ptr<ISorter> pSorter;
 			if (id == IDM_EDIT_SORTLINES_LEXICOGRAPHIC_DESCENDING || id == IDM_EDIT_SORTLINES_LEXICOGRAPHIC_ASCENDING)
 			{
@@ -892,7 +896,8 @@ void Notepad_plus::command(int id)
 					static_cast<int>(lineNo),
 					0);
 			}
-			_pEditView->execute(SCI_ENDUNDOACTION);
+
+			UNDO_ACTION_END;
 
 			if (hasLineSelection) // there was 1 selection, so we restore it
 			{
@@ -1926,16 +1931,20 @@ void Notepad_plus::command(int id)
 			break;
 
 		case IDM_EDIT_REMOVE_CONSECUTIVE_DUP_LINES:
-			_pEditView->execute(SCI_BEGINUNDOACTION);
+		{
+			UNDO_ACTION_CREATE_AND_BEGIN(_pEditView);
 			removeDuplicateLines();
-			_pEditView->execute(SCI_ENDUNDOACTION);
+			UNDO_ACTION_END;
 			break;
+		}
 
 		case IDM_EDIT_REMOVE_ANY_DUP_LINES:
-			_pEditView->execute(SCI_BEGINUNDOACTION);
+		{
+			UNDO_ACTION_CREATE_AND_BEGIN(_pEditView);
 			_pEditView->removeAnyDuplicateLines();
-			_pEditView->execute(SCI_ENDUNDOACTION);
+			UNDO_ACTION_END;
 			break;
+		}
 
 		case IDM_EDIT_SPLIT_LINES:
 		{
@@ -1991,23 +2000,27 @@ void Notepad_plus::command(int id)
 			break;
 
 		case IDM_EDIT_REMOVEEMPTYLINES:
-			_pEditView->execute(SCI_BEGINUNDOACTION);
+		{
+			UNDO_ACTION_CREATE_AND_BEGIN(_pEditView);
 			removeEmptyLine(false);
-			_pEditView->execute(SCI_ENDUNDOACTION);
+			UNDO_ACTION_END;
 			break;
+		}
 
 		case IDM_EDIT_REMOVEEMPTYLINESWITHBLANK:
-			_pEditView->execute(SCI_BEGINUNDOACTION);
+		{
+			UNDO_ACTION_CREATE_AND_BEGIN(_pEditView);
 			removeEmptyLine(true);
-			_pEditView->execute(SCI_ENDUNDOACTION);
+			UNDO_ACTION_END;
 			break;
+		}
 
 		case IDM_EDIT_UPPERCASE:
-            _pEditView->convertSelectedTextToUpperCase();
+			_pEditView->convertSelectedTextToUpperCase();
 			break;
 
 		case IDM_EDIT_LOWERCASE:
-            _pEditView->convertSelectedTextToLowerCase();
+			_pEditView->convertSelectedTextToLowerCase();
 			break;
 
 		case IDM_EDIT_PROPERCASE_FORCE:
@@ -2058,9 +2071,9 @@ void Notepad_plus::command(int id)
 		{
 			std::lock_guard<std::mutex> lock(command_mutex);
 
-			_pEditView->execute(SCI_BEGINUNDOACTION);
+			UNDO_ACTION_CREATE_AND_BEGIN(_pEditView);
 			doTrim(lineTail);
-			_pEditView->execute(SCI_ENDUNDOACTION);
+			UNDO_ACTION_END;
 			break;
 		}
 
@@ -2068,9 +2081,9 @@ void Notepad_plus::command(int id)
 		{
 			std::lock_guard<std::mutex> lock(command_mutex);
 
-			_pEditView->execute(SCI_BEGINUNDOACTION);
+			UNDO_ACTION_CREATE_AND_BEGIN(_pEditView);
 			doTrim(lineHeader);
-			_pEditView->execute(SCI_ENDUNDOACTION);
+			UNDO_ACTION_END;
 			break;
 		}
 
@@ -2078,28 +2091,30 @@ void Notepad_plus::command(int id)
 		{
 			std::lock_guard<std::mutex> lock(command_mutex);
 
-			_pEditView->execute(SCI_BEGINUNDOACTION);
+			UNDO_ACTION_CREATE_AND_BEGIN(_pEditView);
 			doTrim(lineBoth);
-			_pEditView->execute(SCI_ENDUNDOACTION);
+			UNDO_ACTION_END;
 			break;
 		}
 
 		case IDM_EDIT_EOL2WS:
-			_pEditView->execute(SCI_BEGINUNDOACTION);
+		{
+			UNDO_ACTION_CREATE_AND_BEGIN(_pEditView);
 			eol2ws();
-			_pEditView->execute(SCI_ENDUNDOACTION);
+			UNDO_ACTION_END;
 			break;
+		}
 
 		case IDM_EDIT_TRIMALL:
 		{
 			std::lock_guard<std::mutex> lock(command_mutex);
 
-			_pEditView->execute(SCI_BEGINUNDOACTION);
+			UNDO_ACTION_CREATE_AND_BEGIN(_pEditView);
 			bool isEntireDoc = _pEditView->execute(SCI_GETANCHOR) == _pEditView->execute(SCI_GETCURRENTPOS);
 			doTrim(lineBoth);
 			if (isEntireDoc || _pEditView->execute(SCI_GETANCHOR) != _pEditView->execute(SCI_GETCURRENTPOS))
 				eol2ws();
-			_pEditView->execute(SCI_ENDUNDOACTION);
+			UNDO_ACTION_END;
 			break;
 		}
 

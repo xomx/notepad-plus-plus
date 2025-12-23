@@ -1107,3 +1107,305 @@ protected:
 	std::pair<size_t, size_t> getWordRange();
 	void getFoldColor(COLORREF& fgColor, COLORREF& bgColor, COLORREF& activeFgColor);
 };
+
+
+//#define NPP_SCOPED_SCI_UNDOACTION_LOG // define, when you always want to check for possible Notepad++ undo actions problems
+
+#ifdef _MSC_VER
+#ifdef _DEBUG
+#ifndef NPP_SCOPED_SCI_UNDOACTION_LOG
+#define NPP_SCOPED_SCI_UNDOACTION_LOG // define to have this facility available in all the MSVS debug builds as default
+#endif
+#endif
+#endif
+
+#ifndef NPP_SCOPED_SCI_UNDOACTION_LOG
+
+// TO USE IN CODE: //////////////////////////////////////////////////////////////////////////
+#define UNDO_ACTION_CREATE(pSciEditView) ScopedSciUndoAction ssua_obj(pSciEditView, false)
+#define UNDO_ACTION_CREATE_AND_BEGIN(pSciEditView) ScopedSciUndoAction ssua_obj(pSciEditView)
+#define UNDO_ACTION_BEGIN ssua_obj.beginUndoAction()
+#define UNDO_ACTION_END ssua_obj.endUndoAction()
+/////////////////////////////////////////////////////////////////////////////////////////////
+
+class ScopedSciUndoAction final
+{
+public:
+	ScopedSciUndoAction(const ScintillaEditView* pSciEditView, bool bImplicitBeginUndoAction = true) :
+		_pSciEditView(pSciEditView) {
+		if (bImplicitBeginUndoAction)
+			beginUndoAction();
+	}
+
+	~ScopedSciUndoAction() {
+		if (_pSciEditView) {
+			while (_sciUndoActionDepth) {
+				// ensure automatic SCI_ENDUNDOACTION matching for all the previous SCI_BEGINUNDOACTION calls at any circumstances
+				endUndoAction();
+			}
+		}
+	}
+
+	size_t beginUndoAction() {
+		if (_pSciEditView) {
+			_pSciEditView->execute(SCI_BEGINUNDOACTION);
+			_sciUndoActionDepth++;
+		}
+		return _sciUndoActionDepth;
+	}
+
+	size_t endUndoAction() {
+		if (_pSciEditView && (_sciUndoActionDepth > 0)) {
+			_sciUndoActionDepth--;
+			_pSciEditView->execute(SCI_ENDUNDOACTION);
+		}
+		return _sciUndoActionDepth;
+	}
+
+	bool isUndoAction() const {
+		return (_sciUndoActionDepth > 0);
+	}
+
+	size_t getCurrentDepth() const {
+		return _sciUndoActionDepth;
+	}
+
+private:
+	const ScintillaEditView* _pSciEditView = nullptr;
+	size_t _sciUndoActionDepth = 0;
+
+	ScopedSciUndoAction(const ScopedSciUndoAction&) = delete;
+	ScopedSciUndoAction& operator=(const ScopedSciUndoAction&) = delete;
+};
+
+#else // #ifndef NPP_SCOPED_SCI_UNDOACTION_LOG
+
+#include <iostream>
+#include <filesystem>
+#include <vector>
+#include <mutex>
+
+#define WIDE2(x) L##x
+#define WIDE1(x) WIDE2(x)
+#define WFILE WIDE1(__FILE__)
+
+#define LOG_ALL_UNDO_ACTIONS false // TO EDIT: define "true" or "false" only
+
+// TO USE IN CODE: //////////////////////////////////////////////////////////////////////////////////////////////////////
+#define UNDO_ACTION_CREATE(pSciEditView) ScopedSciUndoAction ssua_obj(pSciEditView, __func__, WFILE, __LINE__, false)
+#define UNDO_ACTION_CREATE_AND_BEGIN(pSciEditView) ScopedSciUndoAction ssua_obj(pSciEditView,  __func__, WFILE, __LINE__)
+#define UNDO_ACTION_BEGIN ssua_obj.beginUndoAction( __func__, WFILE, __LINE__, LOG_ALL_UNDO_ACTIONS)
+#define UNDO_ACTION_END ssua_obj.endUndoAction(LOG_ALL_UNDO_ACTIONS)
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+static bool uaFirstLog = true;
+static std::wstring uaLogFile;
+static size_t uaLogCounter = 0;
+static void uaLog(const std::wstring& msg) {
+	HANDLE hLogMtx = ::CreateMutexW(nullptr, FALSE, L"uaNppLogInstance"); // no need to use the Global namespace here
+	if (!hLogMtx) {
+		std::cerr << "Failed to create the mutex inside the Notepad++ UndoAction log!"
+			<< " (CreateMutex error code: " << ::GetLastError() << ")" << std::endl;
+		return;
+	}
+
+	DWORD dwWaitResult = ::WaitForSingleObject(hLogMtx, INFINITE);
+	if (dwWaitResult != WAIT_OBJECT_0) {
+		std::cerr << "Failed to acquire the mutex inside the Notepad++ UndoAction log!"
+			<< " (WaitForSingleObject dwWaitResult: " << dwWaitResult << ")" << std::endl;
+		return;
+	}
+
+	// mutex acquired, we are race-condition safe here across the possible Notepad++ multi-inst processes and different threads
+
+	if (uaFirstLog) {
+		uaLogFile = NppParameters::getInstance().getUserPath() + L"\\NppUndoAction.log";
+	}
+	FILE* file = nullptr;
+	errno_t err = _wfopen_s(&file, uaLogFile.c_str(), L"a, ccs=UTF-16LE");
+	if (err == 0) {
+		if (uaFirstLog) {
+			uaFirstLog = false;
+			SYSTEMTIME currentTime{};
+			::GetLocalTime(&currentTime);
+			fwprintf_s(file, L"\n%08zu: START %s (PID/TID: %u/%u)\n",
+				uaLogCounter, (getDateTimeStrFrom(L"yyyy-MM-dd HH:mm:ss", currentTime)).c_str(), ::GetCurrentProcessId(), ::GetCurrentThreadId());
+			uaLogCounter++;
+		}
+		fwprintf_s(file, L"%08zu: %s\n", uaLogCounter, msg.c_str());
+		uaLogCounter++;
+		//fflush(file);
+		fclose(file);
+	}
+	else {
+		std::cerr << "Failed to open Notepad++ UndoAction log file!" << " (error code: " << err << ")" << std::endl;
+	}
+
+	::ReleaseMutex(hLogMtx);
+	::CloseHandle(hLogMtx);
+}
+
+struct UndoActionLogItem
+{
+	std::string func;
+	std::wstring file;
+	unsigned int line = 0;
+	DWORD tid = 0;
+};
+
+class UndoActionLogItemStorage // thread-safe object
+{
+public:
+	UndoActionLogItemStorage() = default;
+
+	~UndoActionLogItemStorage() {
+		// std::vector _items destructor handles it all, for explicit releasing uncomment the two lines below
+		//std::lock_guard<std::mutex> lock(_mtx); // mutex is still valid during the destruction
+		//std::vector<UndoActionLogItem>().swap(_items); // ensure complete memory release right now
+	}
+
+	void addItem(const char* szFunc, const wchar_t* wszFile, const unsigned int uLine, const DWORD tid) {
+		std::lock_guard<std::mutex> lock(_mtx);
+		_items.push_back(UndoActionLogItem{ szFunc ? szFunc : "", wszFile ? wszFile : L"", uLine, tid });
+	}
+
+	bool removeItem(const size_t index) {
+		std::lock_guard<std::mutex> lock(_mtx);
+		if (index >= _items.size())
+			return false;
+		_items.erase(_items.begin() + index);
+		return true;
+	}
+
+	bool getItem(const size_t index, UndoActionLogItem& output) const {
+		std::lock_guard<std::mutex> lock(_mtx);
+		if (index >= _items.size())
+			return false;
+		output = _items[index]; // copy
+		return true;
+	}
+
+	bool compareItem(const size_t index, const char* szFunc, const wchar_t* wszFile, unsigned int uLine, const DWORD dwTID) const {
+		std::lock_guard<std::mutex> lock(_mtx);
+		if (index >= _items.size())
+			return false;
+		return (_items[index].func == (szFunc ? szFunc : "") && (_items[index].file == (wszFile ? wszFile : L""))
+			&& (_items[index].line == uLine) && (_items[index].tid == dwTID));
+	}
+
+	bool findItemIndex(const char* szFunc, const wchar_t* wszFile, const unsigned int uLine, const DWORD dwTID, size_t& outIndex) const {
+		std::lock_guard<std::mutex> lock(_mtx);
+		const std::wstring wfile = wszFile ? wszFile : L"";
+		const std::string sfunc = szFunc ? szFunc : "";
+		for (std::size_t i = 0; i < _items.size(); ++i) {
+			if ((_items[i].func == sfunc) && (_items[i].file == wfile) && (_items[i].line == uLine) && (_items[i].tid == dwTID)) {
+				outIndex = i; // gotcha
+				return true;
+			}
+		}
+		return false;
+	}
+
+	size_t size() const {
+		std::lock_guard<std::mutex> lock(_mtx);
+		return _items.size();
+	}
+
+	void reset() {
+		std::lock_guard<std::mutex> lock(_mtx);
+		_items.erase(_items.begin(), _items.end()); // release the allocated items memory (capacity remains - allocator dependent)
+		//std::vector<UndoActionLogItem>().swap(_items); // immediately release all of the allocated items memory
+	}
+
+private:
+	mutable std::mutex _mtx;
+	std::vector<UndoActionLogItem> _items;
+};
+
+class ScopedSciUndoAction final
+{
+public:
+	ScopedSciUndoAction(const ScintillaEditView* pSciEditView, const char* srcFunc, const wchar_t* srcFile, const unsigned int srcLine,
+		const bool bImplicitBeginUndoAction = true) :
+		_pSciEditView(pSciEditView) {
+		if (bImplicitBeginUndoAction)
+			beginUndoAction(srcFunc, srcFile, srcLine);
+	}
+
+	~ScopedSciUndoAction() {
+		if (_pSciEditView && (_sciUndoActionDepth > 0)) {
+			std::wstring strErr = L"!!! ScopedSciUndoAction destructor found " + std::to_wstring(_sciUndoActionDepth);
+			strErr += L" unpaired previous SCI_BEGINUNDOACTION call(s), correcting SCI_ENDUNDOACTION(s) follows: ";
+			uaLog(strErr);
+			while (_sciUndoActionDepth) {
+				// ensure automatic SCI_ENDUNDOACTION matching for all the previous SCI_BEGINUNDOACTION calls at any circumstances
+				endUndoAction(true);
+			}
+		}
+	}
+
+	size_t beginUndoAction(const char* srcFunc, const wchar_t* srcFile, const unsigned int srcLine, const bool bLog = false) {
+		if (_pSciEditView) {
+			_pSciEditView->execute(SCI_BEGINUNDOACTION);
+			_uaLogItems.addItem(srcFunc, srcFile, srcLine, ::GetCurrentThreadId());
+			_sciUndoActionDepth++;
+			if (bLog) {
+				// 1st param 0 is signalizing that it is from the beginUndoAction (TID cannot be zero)
+				uaLog(createLogLine(0, srcFunc, srcFile, srcLine, ::GetCurrentThreadId(), _sciUndoActionDepth));
+			}
+		} else {
+			uaLog(std::wstring(L"beginUndoAction call used without a valid ScintillaEditView* object ptr!?"));
+		}
+		return _sciUndoActionDepth;
+	}
+
+	size_t endUndoAction(const bool bLog = false) {
+		if (_pSciEditView && (_sciUndoActionDepth > 0)) {
+			if (bLog) {
+				UndoActionLogItem uaLogItem;
+				if (_uaLogItems.getItem(_sciUndoActionDepth - 1, uaLogItem)) {
+					uaLog(createLogLine(::GetCurrentThreadId(),
+						uaLogItem.func.c_str(), uaLogItem.file.c_str(), uaLogItem.line, uaLogItem.tid, _sciUndoActionDepth));
+				}
+			}
+			_uaLogItems.removeItem(_sciUndoActionDepth - 1);
+			_sciUndoActionDepth--;
+			_pSciEditView->execute(SCI_ENDUNDOACTION);
+		} else {
+			if (!_pSciEditView) {
+				uaLog(std::wstring(L"endUndoAction call used used without a valid ScintillaEditView* object ptr!?"));
+			} else {
+				uaLog(std::wstring(L"endUndoAction call used without previous beginUndoAction calling!"));
+			}
+		}
+		return _sciUndoActionDepth;
+	}
+
+	bool isUndoAction() const {
+		return (_sciUndoActionDepth > 0);
+	}
+
+	size_t getCurrentDepth() const {
+		return _sciUndoActionDepth;
+	}
+
+private:
+	ScopedSciUndoAction(const ScopedSciUndoAction&) = delete;
+	ScopedSciUndoAction& operator=(const ScopedSciUndoAction&) = delete;
+
+	std::wstring createLogLine(const DWORD dwEndUndoActionTID, const char* srcFunc,
+		const wchar_t* srcFile, const unsigned int srcLine, const DWORD dwBeginUndoActionTID, const size_t uaDepth) {
+		std::wstringstream wss;
+		wss << (dwEndUndoActionTID ? L"EndUA   for " : L"BeginUA from") << L" - func: " << srcFunc << L" | file: "
+			<< std::filesystem::path(srcFile).filename().c_str() << L" | line: " << srcLine
+			<< L"    - UA-depth: " << uaDepth << L"    - BeginUA TID: " << dwBeginUndoActionTID
+			<< (dwEndUndoActionTID ? L"    - EndUA TID: " : L"") << (dwEndUndoActionTID ? std::to_wstring(dwEndUndoActionTID) : std::wstring());
+		return wss.str();
+	}
+
+	const ScintillaEditView* _pSciEditView = nullptr;
+	size_t _sciUndoActionDepth = 0;
+	UndoActionLogItemStorage _uaLogItems;
+};
+
+#endif // #else from #ifndef NPP_SCOPED_SCI_UNDOACTION_LOG
