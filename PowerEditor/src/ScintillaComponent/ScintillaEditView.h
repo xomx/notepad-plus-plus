@@ -1109,7 +1109,7 @@ protected:
 };
 
 
-//#define NPP_SCOPED_SCI_UNDOACTION_LOG // define, when you always want to check for possible Notepad++ undo actions problems
+#define NPP_SCOPED_SCI_UNDOACTION_LOG // define, when you always want to check for possible Notepad++ undo actions problems
 
 #ifdef _MSC_VER
 #ifdef _DEBUG
@@ -1190,6 +1190,7 @@ private:
 #define WFILE WIDE1(__FILE__)
 
 #define LOG_ALL_UNDO_ACTIONS false // TO EDIT: define "true" or "false" only
+#define USE_WARNING_MSGBOX_IN_DTOR // when defined, the ScopedSciUndoAction destructor immediately warns us
 
 // TO USE IN CODE: //////////////////////////////////////////////////////////////////////////////////////////////////////
 #define UNDO_ACTION_CREATE(pSciEditView) ScopedSciUndoAction ssua_obj(pSciEditView, __func__, WFILE, __LINE__, false)
@@ -1337,6 +1338,9 @@ public:
 			std::wstring strErr = L"!!! ScopedSciUndoAction destructor found " + std::to_wstring(_sciUndoActionDepth);
 			strErr += L" unpaired previous SCI_BEGINUNDOACTION call(s), correcting SCI_ENDUNDOACTION(s) follows: ";
 			uaLog(strErr);
+#ifdef USE_WARNING_MSGBOX_IN_DTOR
+			::MessageBoxW(NULL, strErr.c_str(), L"Notepad++ ~ScopedSciUndoAction", MB_OK | MB_APPLMODAL | MB_ICONWARNING);
+#endif
 			while (_sciUndoActionDepth) {
 				// ensure automatic SCI_ENDUNDOACTION matching for all the previous SCI_BEGINUNDOACTION calls at any circumstances
 				endUndoAction(true);
