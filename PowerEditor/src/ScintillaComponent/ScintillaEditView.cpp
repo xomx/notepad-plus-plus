@@ -678,11 +678,11 @@ LRESULT CALLBACK ScintillaEditView::ScintillaProc(
 			// hack allowing to use the keyboard Ctrl+X/C/V while still holding left mouse button (used for the text selection...)
 			// (Note: The LMB blocking registered app-menu items shortcuts, here the Edit-menu Cut/Copy/Paste, is a standard Windows behavior)
 			if ((wParam == 'X') && (::GetKeyState(VK_CONTROL) & 0x8000) && (::GetKeyState(VK_LBUTTON) & 0x8000))
-				::SendMessage(_hParent, WM_COMMAND, IDM_EDIT_CUT, 0);
+				::SendMessage(pScint->_hParent, WM_COMMAND, IDM_EDIT_CUT, 0);
 			else if ((wParam == 'C') && (::GetKeyState(VK_CONTROL) & 0x8000) && (::GetKeyState(VK_LBUTTON) & 0x8000))
-				::SendMessage(_hParent, WM_COMMAND, IDM_EDIT_COPY, 0);
+				::SendMessage(pScint->_hParent, WM_COMMAND, IDM_EDIT_COPY, 0);
 			else if ((wParam == 'V') && (::GetKeyState(VK_CONTROL) & 0x8000) && (::GetKeyState(VK_LBUTTON) & 0x8000))
-				::SendMessage(_hParent, WM_COMMAND, IDM_EDIT_PASTE, 0);
+				::SendMessage(pScint->_hParent, WM_COMMAND, IDM_EDIT_PASTE, 0);
 
 			break;
 		}
