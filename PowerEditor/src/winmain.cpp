@@ -846,6 +846,28 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE /*hPrevInstance
 				// if the message doesn't belong to the notepad_plus_plus's dialog
 				if (!notepad_plus_plus.isDlgsMsg(&msg))
 				{
+					// enable the standard Ctrl+X/C/V while still holding the left mouse button (from the previous text selection etc...)
+					if ((msg.message == WM_KEYDOWN) && 
+						((msg.wParam == 'X') || (msg.wParam == 'C') || (msg.wParam == 'V')) && 
+						((::GetKeyState(VK_LBUTTON) & 0x8000) && (::GetKeyState(VK_CONTROL) & 0x8000)))
+					{
+						if (notepad_plus_plus.isCurrentScintillaEditViewWnd(msg.hwnd)) // allow in editor-wnd only (change it to if(msg.hwnd!=NULL) to be app-wide)
+						{
+							switch (msg.wParam)
+							{
+								case 'X':
+									::SendMessage(notepad_plus_plus.getHSelf(), WM_COMMAND, IDM_EDIT_CUT, 0);
+									break;
+								case 'C':
+									::SendMessage(notepad_plus_plus.getHSelf(), WM_COMMAND, IDM_EDIT_COPY, 0);
+									break;
+								case 'V':
+									::SendMessage(notepad_plus_plus.getHSelf(), WM_COMMAND, IDM_EDIT_PASTE, 0);
+									break;
+							}
+						}
+					}
+
 					if (::TranslateAccelerator(notepad_plus_plus.getHSelf(), notepad_plus_plus.getAccTable(), &msg) == 0)
 					{
 						::TranslateMessage(&msg);

@@ -68,6 +68,10 @@ public:
 		DPIManagerV2::loadIcon(hinst, MAKEINTRESOURCE(IDI_M30ICON), ::GetSystemMetrics(SM_CXSMICON), ::GetSystemMetrics(SM_CYSMICON), icon);
 	}
 
+	bool isCurrentScintillaEditViewWnd(HWND hWndToCheck) const {
+		return (hWndToCheck == _notepad_plus_plus_core._pEditView->getHSelf());
+	}
+
 private:
 	Notepad_plus _notepad_plus_plus_core;
 	static LRESULT CALLBACK Notepad_plus_Proc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM lParam);
