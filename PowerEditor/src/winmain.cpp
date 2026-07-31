@@ -352,6 +352,10 @@ const wchar_t FLAG_TITLEBAR_ADD[] = L"-titleAdd=";
 const wchar_t FLAG_APPLY_UDL[] = L"-udl=";
 const wchar_t FLAG_PLUGIN_MESSAGE[] = L"-pluginMessage=";
 const wchar_t FLAG_MONITOR_FILES[] = L"-monitor";
+const wchar_t FLAG_STD_INPUT[] = L"-stdin"; // always open a new tab/doc in currently active Notepad++ view for any std input
+const wchar_t FLAG_STD_INPUT_CURDOC[] = L"-stdinCurDoc"; // use existing tab/doc in currently active Notepad++ view for any std input
+const wchar_t FLAG_STD_INPUT_HANDLER[] = L"-STDIN#"; // Notepad++ internal param only (variable, will append PID#HANDLE#CP# stringified)
+const wchar_t FLAG_STD_INPUT_HANDLER_CURDOC[] = L"-STDINCURDOC#"; // Notepad++ internal param only (variable, will append PID#HANDLE#CP# stringified)
 
 void doException(Notepad_plus_Window & notepad_plus_plus)
 {
@@ -374,7 +378,8 @@ void doException(Notepad_plus_Window & notepad_plus_plus)
 		::MessageBox(Notepad_plus_Window::gNppHWND, L"Unfortunately, Notepad++ was not able to save your work. We are sorry for any lost data.", L"Recovery failure", MB_OK | MB_ICONERROR);
 }
 
-// Looks for -z arguments and strips command line arguments following those, if any
+// Looks for -z arguments and strips command line arguments following those, if any.
+// Also strips internal FLAG_STD_INPUT_HANDLE param, if any.
 void stripIgnoredParams(ParamVector & params)
 {
 	for (auto it = params.begin(); it != params.end(); )
@@ -382,10 +387,18 @@ void stripIgnoredParams(ParamVector & params)
 		if (lstrcmp(it->c_str(), L"-z") == 0)
 		{
 			auto nextIt = std::next(it);
-			if ( nextIt != params.end() )
+			if (nextIt != params.end())
 			{
 				params.erase(nextIt);
 			}
+			it = params.erase(it);
+		}
+		else if (it->find(FLAG_STD_INPUT_HANDLER_CURDOC) == 0) // variable param
+		{
+			it = params.erase(it);
+		}
+		else if (it->find(FLAG_STD_INPUT_HANDLER) == 0) // variable param
+		{
 			it = params.erase(it);
 		}
 		else
@@ -562,11 +575,217 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE /*hPrevInstance
 		}
 	} // Notepad++ UAC OPS////////////////////////////////////////////////////////////////////////////////////////////
 
+	// stdin internal handler /////////////////////////////////////////////////////////////////////////////////////////////////
+
+	NppStdinData stdinData;
+	const wchar_t NPP_SYNC_EVENT_PREFIX[] = L"Local\\NotepadPlusPlus_Sync_";
+
+	for (int i = 1; i < __argc; ++i)
+	{
+		std::wstring arg(__wargv[i]);
+		if ((arg.find(FLAG_STD_INPUT_HANDLER_CURDOC) == 0) || (arg.find(FLAG_STD_INPUT_HANDLER) == 0))
+		{
+			// a parent Notepad++ process with a stdinput spawned us
+			// - we need to unblock the parent Notepad++ ASAP, as it also blocks its stdinput parent console/process,
+			//   so we only here make the needed stdin HANDLE duplicate and signal OK-TO-EXIT to the parent Notepad++
+
+			if (arg.find(FLAG_STD_INPUT_HANDLER_CURDOC) == 0)
+				stdinData.nppMode = STDIN_TOCURDOC;
+			else
+				stdinData.nppMode = STDIN_TONEWDOC;
+
+			HANDLE hRemoteStdin = NULL;
+
+			try {
+				// tokenize param (PID#HANDLE#CP#)
+				std::wstring pidStr, handleStr, cpStr;
+				std::wstring* targets[] = { &pidStr, &handleStr, &cpStr };
+				std::wstringstream wss(arg.substr(wcslen((stdinData.nppMode == STDIN_TOCURDOC) ? FLAG_STD_INPUT_HANDLER_CURDOC : FLAG_STD_INPUT_HANDLER)));
+				std::wstring token;
+				size_t index = 0;
+				while (index < 3 && std::getline(wss, token, L'#'))
+				{
+					*targets[index++] = std::move(token);
+				}
+
+				stdinData.dwRemotePid = static_cast<UINT>(std::stoul(pidStr));
+
+				unsigned long long rawVal = std::stoull(handleStr); // reads up to 64-bit integers
+				uintptr_t archSafeVal = static_cast<uintptr_t>(rawVal); // to prevent compiler err C2440 on x86
+				hRemoteStdin = reinterpret_cast<HANDLE>(archSafeVal);
+
+				stdinData.uStdinCP = static_cast<UINT>(std::stoul(cpStr));
+			}
+			catch (const std::invalid_argument&)
+			{
+				stdinData.dwRemotePid = 0;
+				hRemoteStdin = NULL;
+				stdinData.uStdinCP = CP_ACP;
+			}
+			catch (const std::out_of_range&)
+			{
+				stdinData.dwRemotePid = 0;
+				hRemoteStdin = NULL;
+				stdinData.uStdinCP = CP_ACP;
+			}
+
+			// reconstruct our event name for sending OK-TO-EXIT signal
+			std::wstring eventName = NPP_SYNC_EVENT_PREFIX + std::to_wstring(stdinData.dwRemotePid);
+
+			// create our local stdin HANDLE duplicate
+			stdinData.hStdin = ImportRemoteHandle(stdinData.dwRemotePid, hRemoteStdin);
+			if (stdinData.hStdin == NULL)
+				return 0; // failed
+
+			HANDLE hEvent = ::OpenEventW(EVENT_MODIFY_STATE, FALSE, eventName.c_str());
+			if (hEvent)
+			{
+				HANDLE hRemoteProcess = ::OpenProcess(SYNCHRONIZE, FALSE, stdinData.dwRemotePid); // establish before SetEvent (prevent OS PID recycling trap)
+				::SetEvent(hEvent); // instantly releases the parent's WaitForMultipleObjects
+				::CloseHandle(hEvent);
+				stdinData.dwRemotePid = 0; // the stdinData.hStdin is local now, not remote
+				if (hRemoteProcess == NULL)
+				{
+					// possibly elevated vs non-elevated UIPI boundary, so do just only a thread context switching
+					// for ensuring that the parent Notepad++ process finishes 1st before we continue here
+					::Sleep(1);
+				}
+				else
+				{
+					// can wait exactly for the parent Notepad++ process signaled exit
+					::WaitForSingleObject(hRemoteProcess, INFINITE);
+					::CloseHandle(hRemoteProcess);
+				}
+			}
+			else
+			{
+				// failed
+				::CloseHandle(stdinData.hStdin);
+				return 0; // our exit here also unblocks potentially waiting parent
+			}
+
+			break;
+		}
+		else if (arg.find(FLAG_STD_INPUT_CURDOC) == 0)
+		{
+			stdinData.nppMode = STDIN_TOCURDOC;
+			break;
+		}
+		else if (arg.find(FLAG_STD_INPUT) == 0)
+		{
+			stdinData.nppMode = STDIN_TONEWDOC;
+			break;
+		}
+	}
+
+	// stdin internal handler end ///////////////////////////////////////////////////////////////////////////////////
+
 	bool TheFirstOne = true;
 	::SetLastError(NO_ERROR);
 	::CreateMutex(NULL, false, L"nppInstance");
 	if (::GetLastError() == ERROR_ALREADY_EXISTS)
 		TheFirstOne = false;
+
+	// stdin user handler ///////////////////////////////////////////////////////////////////////////////////////////
+
+	if ((stdinData.nppMode != STDIN_NONE) && (stdinData.hStdin == NULL))
+	{
+		// We have been called with the "-stdin" or "-stdinCurDoc" param on cmdline (cannot be combined with any other cmdline param).
+		// 
+		// For not blocking the parent console/process, we must exit this Notepad++ instance ASAP.
+		// 
+		// A) We are the 1st Notepad++ instance (TheFirstOne == true)
+		//    - we will spawn a new Notepad++ instance (child) process via CreateProcessW, passing the stdin handle stuff
+		//      obtained here via stringified internal cmdline param ("-STDIN(CURDOC)#RemotePID#RemoteStdinHANDLE#RemoteCP#")
+		//
+		// B) There is already a Notepad++ instance running (TheFirstOne == false)
+		//    - we will pass the stdin handle obtained here (together with PID, CP and NewDoc/CurDoc mode)
+		//      via the Notepad++ WM_COPYDATA IPC in NppStdinData struct
+		//
+		// Then that another Notepad++ instance will immediately duplicate the original stdin handle obtained here.
+		// After a duplicate has been created, this instance immediately exits to unblock the parent stdin console/process.
+		// 
+		// Final stdin data processing is via posting a NPPM_INTERNAL_GETSTDINPUT message (from the WM_COPYDATA handler
+		// or from the start of the main Notepad++ message loop here in wWinMain), already with local stdin duplicate HANDLE only.
+		//
+		// This stdin processing is currently disabled in Notepad++ multi-inst mode (safety measure, in that case nothing happens).
+
+		stdinData.dwRemotePid = ::GetCurrentProcessId();
+
+		stdinData.hStdin = ::GetStdHandle(STD_INPUT_HANDLE);
+		if (stdinData.hStdin == INVALID_HANDLE_VALUE || !stdinData.hStdin)
+			return 0; // failed or just no input stream (NULL) at all
+
+		// ensure we are reading from a pipe ("echo SomeTextOutout | notepad++.exe -stdin") or 
+		// disk/file redirection ("notepad++.exe -stdin < FileData2SeeInNpp.txt"), not the keyboard typing etc
+		DWORD dwFileType = ::GetFileType(stdinData.hStdin);
+		if ((dwFileType != FILE_TYPE_PIPE) && (dwFileType != FILE_TYPE_DISK))
+		{
+			::CloseHandle(stdinData.hStdin);
+			return 0; // not supported
+		}
+
+		// try to attach to CMD/PowerShell's parent console session (do not use here AllocConsole() !)
+		if (::AttachConsole(ATTACH_PARENT_PROCESS))
+		{
+			stdinData.uStdinCP = ::GetConsoleCP(); // now GetConsoleCP works in the parent console context
+			::FreeConsole(); // immediately detach
+		}
+		else
+		{
+			stdinData.uStdinCP = ::GetOEMCP(); // fallback directly to system OEM CP (e.g. CP850 for Western Europe)
+		}
+
+		if (TheFirstOne)
+		{
+			// sync event with pseudounique name (can be secured more against a DoS if needed)
+			std::wstring eventName = NPP_SYNC_EVENT_PREFIX + std::to_wstring(stdinData.dwRemotePid);
+			HANDLE hEvent = ::CreateEventW(NULL, TRUE, FALSE, eventName.c_str()); // create unsignaled
+			if (!hEvent)
+				return 0; // cannot continue
+
+			wchar_t wszNppPath[MAX_PATH]{};
+			::GetModuleFileNameW(NULL, wszNppPath, MAX_PATH);
+
+			// construct the internal cmdline stringified param "-STDIN#PID#HANDLE#CP"
+			std::wstring cmdLineStr = L"\"";
+			cmdLineStr += wszNppPath;
+			cmdLineStr += L"\" ";
+			cmdLineStr += (stdinData.nppMode == STDIN_TOCURDOC) ? FLAG_STD_INPUT_HANDLER_CURDOC : FLAG_STD_INPUT_HANDLER;
+			cmdLineStr += std::to_wstring(stdinData.dwRemotePid);
+			cmdLineStr += L"#";
+			cmdLineStr += std::to_wstring(reinterpret_cast<uintptr_t>(stdinData.hStdin));
+			cmdLineStr += L"#";
+			cmdLineStr += std::to_wstring(stdinData.uStdinCP);
+			cmdLineStr += L"#";
+
+			// writable! lpCommandLine buffer for CreateProcessW
+			std::vector<wchar_t> cmdLineBuf(cmdLineStr.begin(), cmdLineStr.end());
+			cmdLineBuf.push_back(L'\0'); // NUL-termination
+
+			STARTUPINFO si{};
+			si.cb = sizeof(si);
+			PROCESS_INFORMATION pi{};
+			if (::CreateProcessW(wszNppPath, cmdLineBuf.data(), NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi))
+			{
+				// we have to go with bInheritHandles==FALSE here, so the spawned process will use the passed PID
+				// of this instance for getting a duplicate stdin HANDLE via the OpenProcess(PROCESS_DUP_HANDLE...,
+				// - the following keeps us until the spawned child acks that it is safe to exit here (HANDLE duplication complete)
+				HANDLE waitHandles[] = { hEvent, pi.hProcess };
+				::WaitForMultipleObjects(2, waitHandles, FALSE, INFINITE);
+
+				::CloseHandle(pi.hProcess);
+				::CloseHandle(pi.hThread);
+			}
+
+			::CloseHandle(hEvent);
+			::CloseHandle(stdinData.hStdin); // closes only our local copy here, spawned child Notepad++ has its duplicate
+
+			return 0; // exit this Notepad++ instance to unblock the parent console/process
+		}
+	}
+
+	// stdin user handler end //////////////////////////////////////////////////////////////////////////////////////////////
 
 	std::wstring cmdLineString = pCmdLine ? pCmdLine : L"";
 	ParamVector params;
@@ -710,8 +929,17 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE /*hPrevInstance
 			cmdLineParams._isNoSession = true;
 	}
 
+	// safety check against the final isMultiInst
+	// - prevents spawning of zillions Notepad++ instances via stdin piping or redirection (e.g. a rogue script loop...)
+	if (isMultiInst && (stdinData.nppMode != STDIN_NONE))
+	{
+		if (stdinData.hStdin != NULL)
+			::CloseHandle(stdinData.hStdin);
+		return 0;
+	}
+
 	std::wstring quotFileName = L"";
-    // tell the running instance the FULL path to the new files to load
+	// tell the running instance the FULL path to the new files to load
 	size_t nbFilesToOpen = params.size();
 
 	for (size_t i = 0; i < nbFilesToOpen; ++i)
@@ -739,8 +967,8 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE /*hPrevInstance
 			hNotepad_plus = ::FindWindow(Notepad_plus_Window::getClassName(), NULL);
 		}
 
-        if (hNotepad_plus)
-        {
+		if (hNotepad_plus)
+		{
 			// First of all, destroy static object NppParameters
 			nppParameters.destroyInstance();
 
@@ -760,6 +988,22 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE /*hPrevInstance
 					::ShowWindow(hNotepad_plus, sw);
 			}
 			::SetForegroundWindow(hNotepad_plus);
+
+			if (stdinData.nppMode != STDIN_NONE)
+			{
+				// previous instance running does not have the current parent console stdinput,
+				// we must pass the all the stuff needed to be processed there
+
+				COPYDATASTRUCT cds{};
+				cds.dwData = COPYDATA_STDIN;
+				cds.lpData = &stdinData;
+				cds.cbData = sizeof(stdinData);
+
+				// this blocks until the receiver duplicates the stdin HANDLE
+				::SendMessage(hNotepad_plus, WM_COPYDATA, NULL, reinterpret_cast<LPARAM>(&cds)); 
+
+				return 0;
+			}
 
 			if (params.size() > 0                         // if there are files to open, use the WM_COPYDATA system
 				|| !cmdLineParams._pluginMessage.empty()) // or pluginMessage is present, use the WM_COPYDATA system as well
@@ -785,7 +1029,7 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE /*hPrevInstance
 				::SendMessage(hNotepad_plus, WM_COPYDATA, reinterpret_cast<WPARAM>(hInstance), reinterpret_cast<LPARAM>(&fileNamesData));
 			}
 			return 0;
-        }
+		}
 	}
 
 	auto upNotepadWindow = std::make_unique<Notepad_plus_Window>();
@@ -818,6 +1062,31 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE /*hPrevInstance
 	try {
 		notepad_plus_plus.init(hInstance, NULL, quotFileName.c_str(), &cmdLineParams);
 		allowPrivilegeMessages(notepad_plus_plus, ver);
+
+		if ((stdinData.hStdin != NULL) && (stdinData.dwRemotePid == 0))
+		{
+			// allocate passed struct on heap so it survives after the PostMessage immediately returns
+			NppStdinData* pData2Post = new NppStdinData;
+			if (!pData2Post)
+			{
+				// failed, only tidy up the duplicated handle
+				::CloseHandle(stdinData.hStdin);
+			}
+			else
+			{
+				pData2Post->dwRemotePid = 0; // now the hStdin is local, not remote
+				pData2Post->hStdin = stdinData.hStdin;
+				pData2Post->uStdinCP = stdinData.uStdinCP;
+				pData2Post->nppMode = stdinData.nppMode;
+				if (!::PostMessage(notepad_plus_plus.getHSelf(), NPPM_INTERNAL_GETSTDINPUT, 0, reinterpret_cast<LPARAM>(pData2Post)))
+				{
+					// weird, msg failed to reach its recipient, we have to clean up ourselves
+					::CloseHandle(stdinData.hStdin);
+					delete pData2Post;
+				}
+			}
+		}
+
 		bool going = true;
 		while (going)
 		{

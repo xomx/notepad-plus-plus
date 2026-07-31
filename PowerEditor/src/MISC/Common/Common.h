@@ -349,3 +349,5 @@ private:
 
 
 bool needsElevation4Access(const std::wstring& path2check, bool bWriteAccess);
+
+HANDLE ImportRemoteHandle(DWORD dwRemotePid, HANDLE hRemote);

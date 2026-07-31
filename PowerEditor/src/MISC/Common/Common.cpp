@@ -2579,3 +2579,20 @@ bool needsElevation4Access(const std::wstring& path2check, bool bWriteAccess)
 	// an elevation will not help us here (HW R/O, file-in-use locks, complex restrictive ACLs, etc.)
 	return false;
 }
+
+HANDLE ImportRemoteHandle(DWORD dwRemotePid, HANDLE hRemote)
+{
+	HANDLE hLocal = NULL;
+	if ((hRemote != NULL) && (dwRemotePid != 0))
+	{
+		HANDLE hRemoteProcess = ::OpenProcess(PROCESS_DUP_HANDLE, FALSE, dwRemotePid);
+		if (hRemoteProcess)
+		{
+			// duplicate the handle directly into our current process space
+			::DuplicateHandle(hRemoteProcess, hRemote, ::GetCurrentProcess(),
+				&hLocal, 0, FALSE, DUPLICATE_SAME_ACCESS);
+			::CloseHandle(hRemoteProcess);
+		}
+	}
+	return hLocal; // NULL if failed
+}

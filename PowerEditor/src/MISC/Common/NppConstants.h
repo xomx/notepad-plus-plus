@@ -277,7 +277,8 @@ enum CopyDataParam
 	COPYDATA_PARAMS = 0,
 	//COPYDATA_FILENAMESA = 1, // obsolete, no more useful
 	COPYDATA_FILENAMESW = 2,
-	COPYDATA_FULL_CMDLINE = 3
+	COPYDATA_FULL_CMDLINE = 3,
+	COPYDATA_STDIN = 4
 };
 
 enum UdlDecSep
@@ -285,6 +286,21 @@ enum UdlDecSep
 	DECSEP_DOT,
 	DECSEP_COMMA,
 	DECSEP_BOTH
+};
+
+enum NppStdinMode
+{
+	STDIN_NONE = 0,
+	STDIN_TONEWDOC = 1,
+	STDIN_TOCURDOC = 2
+};
+
+struct NppStdinData
+{
+	DWORD dwRemotePid = 0;
+	HANDLE hStdin = NULL;
+	UINT uStdinCP = CP_ACP;
+	NppStdinMode nppMode = STDIN_NONE;
 };
 
 inline constexpr int NPP_STYLING_FILESIZE_LIMIT_DEFAULT = (200 * 1024 * 1024); // 200MB+ file won't be styled

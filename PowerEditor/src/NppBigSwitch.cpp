@@ -21,6 +21,8 @@
 #include <format>
 #include <windowsx.h> // for GET_X_LPARAM, GET_Y_LPARAM
 #include <atomic>
+#include <io.h>
+#include <fcntl.h>
 #include "Notepad_plus_Window.h"
 #include "TaskListDlg.h"
 #include "ShortcutMapper.h"
@@ -123,6 +125,71 @@ bool SetOSAppRestart()
 	}
 
 	return bRet;
+}
+
+std::string ConvertRawStdInput2UTF8(const std::vector<char>& rawBuffer, const UINT stdinCP)
+{
+	// this helper currently works only up to INT_MAX (WideCharToMultiByte/MultiByteToWideChar limitation)
+
+	if (rawBuffer.empty() || (rawBuffer.size() > INT_MAX))
+		return ""; // input empty or too big to process
+
+	if (((rawBuffer.size() == 1) && (rawBuffer[0] == '\0')) ||
+		((rawBuffer.size() >= 1) && (rawBuffer[0] == '\0') && (rawBuffer[1] == '\0')))
+		return ""; // skip, input starts with NUL char/wchar_t
+
+	size_t totalBytes = rawBuffer.size();
+	std::string utf8Result;
+	int utf8Size = 0;
+
+	// 1st check for possible UTF-16 LE BOM
+	if (totalBytes >= 2 &&
+		static_cast<unsigned char>(rawBuffer[0]) == 0xFF &&
+		static_cast<unsigned char>(rawBuffer[1]) == 0xFE)
+	{
+		// excluding the 2-byte BOM
+		size_t wcharsCount = (totalBytes - 2) / sizeof(wchar_t);
+		const wchar_t* wideStrBuf = reinterpret_cast<const wchar_t*>(rawBuffer.data() + 2);
+
+		utf8Size = ::WideCharToMultiByte(CP_UTF8, 0, wideStrBuf, static_cast<int>(wcharsCount), nullptr, 0, nullptr, nullptr);
+		if (utf8Size == 0)
+			return ""; // failed
+
+		utf8Result.resize(utf8Size, '\0');
+		::WideCharToMultiByte(CP_UTF8, 0, wideStrBuf, static_cast<int>(wcharsCount), utf8Result.data(), utf8Size, nullptr, nullptr);
+	}
+	else if ((totalBytes >= 3) &&
+		(static_cast<unsigned char>(rawBuffer[0]) == 0xEF) &&
+		(static_cast<unsigned char>(rawBuffer[1]) == 0xBB) &&
+		(static_cast<unsigned char>(rawBuffer[2]) == 0xBF))
+	{
+		// already UTF-8, just strip the 3-byte BOM
+		utf8Result.assign(rawBuffer.data() + 3, totalBytes - 3);
+	}
+	else
+	{
+		// then if no BOM detected, handle it as an 8-bit codepage stream (cmd / PowerShell default behavior)
+
+		const char* ansiStr = rawBuffer.data();
+
+		// 1st ANSI -> UTF-16
+		int wideSize = ::MultiByteToWideChar(stdinCP, 0, ansiStr, static_cast<int>(totalBytes), nullptr, 0);
+		if (wideSize == 0)
+			return ""; // failed
+
+		std::wstring wideStr(wideSize, L'\0');
+		::MultiByteToWideChar(stdinCP, 0, ansiStr, static_cast<int>(totalBytes), wideStr.data(), wideSize);
+
+		// then final UTF-16 -> UTF-8
+		utf8Size = ::WideCharToMultiByte(CP_UTF8, 0, wideStr.data(), static_cast<int>(wideStr.size()), nullptr, 0, nullptr, nullptr);
+		if (utf8Size == 0)
+			return ""; // failed
+
+		utf8Result.resize(utf8Size, '\0');
+		::WideCharToMultiByte(CP_UTF8, 0, wideStr.data(), static_cast<int>(wideStr.size()), utf8Result.data(), utf8Size, nullptr, nullptr);
+	}
+
+	return utf8Result; // normalized UTF-8
 }
 
 LRESULT CALLBACK Notepad_plus_Window::Notepad_plus_Proc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
@@ -776,6 +843,45 @@ LRESULT Notepad_plus::process(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPa
 						wchar_t* fileNamesW = static_cast<wchar_t*>(pCopyData->lpData);
 						const CmdLineParamsDTO& cmdLineParams = nppParam.getCmdLineParams();
 						loadCommandlineParams(fileNamesW, &cmdLineParams);
+						break;
+					}
+
+					case COPYDATA_STDIN:
+					{
+						NppStdinData* pStdinData = static_cast<NppStdinData*>(pCopyData->lpData);
+						HANDLE hLocalStdin = ImportRemoteHandle(pStdinData->dwRemotePid, pStdinData->hStdin);
+						if (hLocalStdin == NULL)
+						{
+							// tidy up only
+							if (pStdinData->hStdin != NULL)
+							{
+								::CloseHandle(pStdinData->hStdin);
+								pStdinData->hStdin = NULL;
+							}
+						}
+						else
+						{
+							// allocate passed struct on heap so it survives after the PostMessage immediately returns
+							NppStdinData* pData2Post = new NppStdinData;
+							if (!pData2Post)
+							{
+								// failed, only tidy up the duplicated handle
+								::CloseHandle(hLocalStdin);
+							}
+							else
+							{
+								pData2Post->dwRemotePid = 0; // now the hStdin is local, not remote
+								pData2Post->hStdin = hLocalStdin;
+								pData2Post->uStdinCP = pStdinData->uStdinCP;
+								pData2Post->nppMode = pStdinData->nppMode;
+								if (!::PostMessage(_pPublicInterface->getHSelf(), NPPM_INTERNAL_GETSTDINPUT, 0, reinterpret_cast<LPARAM>(pData2Post)))
+								{
+									// weird, msg failed to reach its recipient, we have to clean up ourselves
+									::CloseHandle(hLocalStdin);
+									delete pData2Post; 
+								}
+							}
+						}
 						break;
 					}
 				}
@@ -2578,6 +2684,102 @@ LRESULT Notepad_plus::process(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPa
 		{
 			_mainEditView.execute(SCI_SETDRAGDROPENABLED, !nppParam.getSVP()._disableSelectedTextDragDrop);
 			_subEditView.execute(SCI_SETDRAGDROPENABLED, !nppParam.getSVP()._disableSelectedTextDragDrop);
+			return TRUE;
+		}
+
+		case NPPM_INTERNAL_GETSTDINPUT:
+		{
+			NppStdinData* pStdinLocalData = reinterpret_cast<NppStdinData*>(lParam);
+			if (!pStdinLocalData)
+				return TRUE; // invalid input
+
+			if ((pStdinLocalData->hStdin != NULL) && (pStdinLocalData->dwRemotePid == 0)) // working only with local stdin HANDLE duplicates
+			{
+				std::vector<char> stdinRawData;
+
+				// convert WIN32 HANDLE into a CRT file descriptor
+				int fd = _open_osfhandle(reinterpret_cast<LONG_PTR>(pStdinLocalData->hStdin), _O_RDONLY | _O_BINARY);
+				if (fd == -1)
+				{
+					// failed
+					::CloseHandle(pStdinLocalData->hStdin); // safe to use even on an invalid HANDLE passed
+				}
+				else
+				{
+					constexpr size_t MAX_STDIN_SIZE = INT_MAX; // need a safe limit for pipes (unknown size beforehand), also for the final string conversions
+
+					DWORD dwFileType = ::GetFileType(pStdinLocalData->hStdin);
+					if (dwFileType == FILE_TYPE_DISK)
+					{
+						// for the FILE_TYPE_DISK, we can reserve the whole memory ahead (speed up and heap fragmentation prevention)
+						__int64 fileSize = _filelengthi64(fd);
+						if (fileSize > 0)
+						{
+							if (static_cast<size_t>(fileSize) > stdinRawData.capacity())
+								stdinRawData.reserve(std::min(static_cast<size_t>(fileSize), MAX_STDIN_SIZE));
+						}
+					}
+
+					FILE* stream = _fdopen(fd, "rb");
+					if (!stream)
+					{
+						// failed
+						_close(fd); // closes also the associated hStdin WinOS HANDLE
+					}
+					else
+					{
+						static constexpr size_t CHUNK_SIZE = 4096; // 4K optimal buffer
+
+						try {
+							std::vector<char> buffer(CHUNK_SIZE);
+							size_t bytesRead = 0;
+
+							while ((bytesRead = fread(buffer.data(), 1, CHUNK_SIZE, stream)) > 0)
+							{
+								if ((stdinRawData.size() + bytesRead) > MAX_STDIN_SIZE)
+									break; // prevent a possible DoS by an infinite stream (e.g. a looping script)
+
+								stdinRawData.insert(stdinRawData.end(), buffer.begin(), buffer.begin() + bytesRead);
+							}
+						}
+						catch ([[maybe_unused]] const std::bad_alloc& ex)
+						{
+							std::vector<char>().swap(stdinRawData); // immediately release all the allocated but incomplete memory
+							::MessageBoxW(NULL, L"std::bad_alloc exception caught!\n\nProbably not enough contiguous memory to complete the operation.",
+								L"Notepad++ NPPM_INTERNAL_GETSTDINPUT", MB_OK | MB_ICONWARNING | MB_APPLMODAL);
+						}
+						catch (...)
+						{
+							// immediately release all the allocated but incomplete memory
+							std::vector<char>().swap(stdinRawData);
+						}
+
+						fclose(stream); // closes both the stream and the underlying fd / handle
+						pStdinLocalData->hStdin = NULL; // already consumed, set to NULL for surety
+
+						if (stdinRawData.empty())
+						{
+							// all ok but no stdin data
+						}
+						else
+						{
+							std::string stdinUtf8 = ConvertRawStdInput2UTF8(stdinRawData, pStdinLocalData->uStdinCP);
+							std::vector<char>().swap(stdinRawData); // release buffer memory
+
+							// currently only 2 modes available:
+							// - if STDIN_TOCURDOC, the stdinput goes into the currently active view tab/doc
+							// - otherwise always opens a new tab/doc in the currently active view for every stdinput
+							if (pStdinLocalData->nppMode == STDIN_TONEWDOC)
+								::SendMessage(_pPublicInterface->getHSelf(), WM_COMMAND, IDM_FILE_NEW, 0);
+
+							::SendMessage(_pEditView->getHSelf(), SCI_APPENDTEXT,
+								static_cast<WPARAM>(stdinUtf8.length()), reinterpret_cast<LPARAM>(stdinUtf8.c_str()));
+						}
+					}
+				}
+			}
+
+			delete pStdinLocalData;
 			return TRUE;
 		}
 
