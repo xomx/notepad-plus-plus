@@ -629,14 +629,13 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE /*hPrevInstance
 				stdinData.uStdinCP = CP_ACP;
 			}
 
-			// reconstruct our event name for sending OK-TO-EXIT signal
-			std::wstring eventName = NPP_SYNC_EVENT_PREFIX + std::to_wstring(stdinData.dwRemotePid);
-
 			// create our local stdin HANDLE duplicate
 			stdinData.hStdin = ImportRemoteHandle(stdinData.dwRemotePid, hRemoteStdin);
 			if (stdinData.hStdin == NULL)
 				return 0; // failed
 
+			// reconstruct our event for sending OK-TO-EXIT signal
+			std::wstring eventName = NPP_SYNC_EVENT_PREFIX + std::to_wstring(stdinData.dwRemotePid);
 			HANDLE hEvent = ::OpenEventW(EVENT_MODIFY_STATE, FALSE, eventName.c_str());
 			if (hEvent)
 			{
@@ -695,12 +694,11 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE /*hPrevInstance
 		// For not blocking the parent console/process, we must exit this Notepad++ instance ASAP.
 		// 
 		// A) We are the 1st Notepad++ instance (TheFirstOne == true)
-		//    - we will spawn a new Notepad++ instance (child) process via CreateProcessW, passing the stdin handle stuff
-		//      obtained here via stringified internal cmdline param ("-STDIN(CURDOC)#RemotePID#RemoteStdinHANDLE#RemoteCP#")
+		//    - we will spawn a new Notepad++ instance (child) process via CreateProcessW, passing the stdin stuff obtained here
+		//      via stringified internal cmdline param ("-STDIN(CURDOC)#RemotePID#RemoteStdinHANDLE#RemoteCP#")
 		//
 		// B) There is already a Notepad++ instance running (TheFirstOne == false)
-		//    - we will pass the stdin handle obtained here (together with PID, CP and NewDoc/CurDoc mode)
-		//      via the Notepad++ WM_COPYDATA IPC in NppStdinData struct
+		//    - we will pass the stdin stuff obtained here via the Notepad++ WM_COPYDATA IPC in NppStdinData struct
 		//
 		// Then that another Notepad++ instance will immediately duplicate the original stdin handle obtained here.
 		// After a duplicate has been created, this instance immediately exits to unblock the parent stdin console/process.
@@ -742,12 +740,15 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE /*hPrevInstance
 			std::wstring eventName = NPP_SYNC_EVENT_PREFIX + std::to_wstring(stdinData.dwRemotePid);
 			HANDLE hEvent = ::CreateEventW(NULL, TRUE, FALSE, eventName.c_str()); // create unsignaled
 			if (!hEvent)
+			{
+				::CloseHandle(stdinData.hStdin);
 				return 0; // cannot continue
+			}
 
 			wchar_t wszNppPath[MAX_PATH]{};
 			::GetModuleFileNameW(NULL, wszNppPath, MAX_PATH);
 
-			// construct the internal cmdline stringified param "-STDIN#PID#HANDLE#CP"
+			// construct the internal cmdline stringified param "-STDIN(CURDOC)#PID#HANDLE#CP#"
 			std::wstring cmdLineStr = L"\"";
 			cmdLineStr += wszNppPath;
 			cmdLineStr += L"\" ";

@@ -135,7 +135,7 @@ std::string ConvertRawStdInput2UTF8(const std::vector<char>& rawBuffer, const UI
 		return ""; // input empty or too big to process
 
 	if (((rawBuffer.size() == 1) && (rawBuffer[0] == '\0')) ||
-		((rawBuffer.size() >= 1) && (rawBuffer[0] == '\0') && (rawBuffer[1] == '\0')))
+		((rawBuffer.size() >= 2) && (rawBuffer[0] == '\0') && (rawBuffer[1] == '\0')))
 		return ""; // skip, input starts with NUL char/wchar_t
 
 	size_t totalBytes = rawBuffer.size();
@@ -2698,7 +2698,7 @@ LRESULT Notepad_plus::process(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPa
 				std::vector<char> stdinRawData;
 
 				// convert WIN32 HANDLE into a CRT file descriptor
-				int fd = _open_osfhandle(reinterpret_cast<LONG_PTR>(pStdinLocalData->hStdin), _O_RDONLY | _O_BINARY);
+				int fd = _open_osfhandle(reinterpret_cast<intptr_t>(pStdinLocalData->hStdin), _O_RDONLY | _O_BINARY);
 				if (fd == -1)
 				{
 					// failed
@@ -2757,17 +2757,13 @@ LRESULT Notepad_plus::process(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPa
 						fclose(stream); // closes both the stream and the underlying fd / handle
 						pStdinLocalData->hStdin = NULL; // already consumed, set to NULL for surety
 
-						if (stdinRawData.empty())
-						{
-							// all ok but no stdin data
-						}
-						else
+						if (!stdinRawData.empty())
 						{
 							std::string stdinUtf8 = ConvertRawStdInput2UTF8(stdinRawData, pStdinLocalData->uStdinCP);
 							std::vector<char>().swap(stdinRawData); // release buffer memory
 
 							// currently only 2 modes available:
-							// - if STDIN_TOCURDOC, the stdinput goes into the currently active view tab/doc
+							// - if STDIN_TOCURDOC, the stdinput is appended into the currently active view tab/doc
 							// - otherwise always opens a new tab/doc in the currently active view for every stdinput
 							if (pStdinLocalData->nppMode == STDIN_TONEWDOC)
 								::SendMessage(_pPublicInterface->getHSelf(), WM_COMMAND, IDM_FILE_NEW, 0);
