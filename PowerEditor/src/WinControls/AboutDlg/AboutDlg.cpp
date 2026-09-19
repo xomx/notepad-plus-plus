@@ -1115,10 +1115,33 @@ intptr_t CALLBACK NetworkPathWarningBox::run_dlgProc(UINT message, WPARAM wParam
 			changeLang();
 			goToCenter(SWP_SHOWWINDOW | SWP_NOSIZE);
 
-			// to clear the default edit-control whole text selection, needs to be after the whole dlg initialization completes
-			::PostMessageW(::GetDlgItem(_hSelf, IDC_NETWORKPATHWARNINGTEXT_EDIT), EM_SETSEL, (WPARAM)-1, (LPARAM)0);
+			HWND hEditCtrl = ::GetDlgItem(_hSelf, IDC_NETWORKPATHWARNINGTEXT_EDIT);
+			int editLinesCount = static_cast<int>(::SendMessageW(hEditCtrl, EM_GETLINECOUNT, 0, 0));
+			RECT rcClient{};
+			::GetClientRect(hEditCtrl, &rcClient);
+			int editClientHeight = rcClient.bottom - rcClient.top;
+
+			HDC hdc = ::GetDC(hEditCtrl);
+			if (hdc)
+			{
+				HFONT hFont = reinterpret_cast<HFONT>(::SendMessageW(hEditCtrl, WM_GETFONT, 0, 0));
+				HFONT hOldFont = hFont ? static_cast<HFONT>(::SelectObject(hdc, hFont)) : NULL;
+
+				TEXTMETRIC tm{};
+				::GetTextMetrics(hdc, &tm);
+
+				::ShowScrollBar(hEditCtrl, SB_VERT, (editLinesCount * tm.tmHeight > editClientHeight)); // show/hide as needed
+
+				if (hOldFont)
+					::SelectObject(hdc, hOldFont);
+
+				::ReleaseDC(hEditCtrl, hdc);
+			}
+
+			// to clear the default edit-control whole text selection, needs to be done after the whole dlg initialization completes
+			::PostMessageW(hEditCtrl, EM_SETSEL, (WPARAM)-1, (LPARAM)0);
 			// then we need to change focus back from the edit-control to the dlg default "Skip" button
-			::PostMessageW(_hSelf, WM_NEXTDLGCTL, (WPARAM)::GetDlgItem(_hSelf, IDCANCEL), TRUE);
+			::PostMessageW(_hSelf, WM_NEXTDLGCTL, reinterpret_cast<WPARAM>(::GetDlgItem(_hSelf, IDCANCEL)), TRUE);
 
 			return TRUE;
 		}
