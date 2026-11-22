@@ -33,7 +33,7 @@ static const wchar_t msgTitle[] = L"Notepad++ crash analysis";
 static const wchar_t nppDumpName[] = L"NppDump";
 static const wchar_t nppDumpDateId[] = L"_yyyymmdd_hhmmss";
 static const wchar_t nppDumpExt[] = L".dmp";
-static constexpr size_t nppDumpPathEndingLen = (sizeof(nppDumpName) + sizeof(nppDumpDateId) + sizeof(nppDumpExt)) / sizeof(wchar_t);
+static constexpr size_t nppDumpPathEndingLen = _countof(nppDumpName) - 1 + _countof(nppDumpDateId) - 1 + _countof(nppDumpExt) - 1;
 
 
 // important note: as this is used at the crash-time, stick to base WINAPI calls, do not use here any library (C++ and CRT included)
@@ -41,25 +41,26 @@ static constexpr size_t nppDumpPathEndingLen = (sizeof(nppDumpName) + sizeof(npp
 
 MiniDumper::MiniDumper()
 {
+	// to avoid memory (re)allocations at the crash-time
+	_dumppath.resize(MAX_PATH + 1 + nppDumpPathEndingLen);
+	_msg.resize(_dumppath.size() + 128);
 }
 
 bool MiniDumper::writeDump(EXCEPTION_POINTERS* pExceptionInfo, SYSTEMTIME stExc)
 {
-	wchar_t wszScratch[128 + MAX_PATH + nppDumpPathEndingLen]{};
-	const wchar_t* wszResult = nullptr;
 	bool retval = false;
 
 	HMODULE hDll = ::LoadLibraryEx(L"DBGHELP.DLL", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
 	if (!hDll)
 	{
-		wszResult = L"Unable to load the debugging DLL,\r\nfind a recent copy of dbghelp.dll and install it.";
+		_msg = L"Unable to load the debugging DLL,\r\nfind a recent copy of dbghelp.dll and install it.";
 	}
 	else
 	{
 		MINIDUMPWRITEDUMP pfnDump = reinterpret_cast<MINIDUMPWRITEDUMP>(::GetProcAddress(hDll, "MiniDumpWriteDump"));
 		if (!pfnDump)
 		{
-			wszResult = L"The debugging DLL is outdated,\r\nfind a recent copy of dbghelp.dll and install it.";
+			_msg = L"The debugging DLL seems to be outdated,\r\nfind a recent copy of dbghelp.dll and install it.";
 		}
 		else
 		{
@@ -67,40 +68,49 @@ bool MiniDumper::writeDump(EXCEPTION_POINTERS* pExceptionInfo, SYSTEMTIME stExc)
 				msgTitle, MB_YESNO | MB_ICONQUESTION);
 			if (msgret == IDYES)
 			{
-				wchar_t wszDumpPath[MAX_PATH + nppDumpPathEndingLen + 1]{};
-				::GetTempPathW(MAX_PATH, wszDumpPath); // always normalized with backslash at the end
-				wsprintfW(wszDumpPath + lstrlenW(wszDumpPath), L"%s_%04u%02u%02u_%02u%02u%02u%s",
-					nppDumpName,
-					stExc.wYear, stExc.wMonth, stExc.wDay, stExc.wHour, stExc.wMinute, stExc.wSecond,
-					nppDumpExt);
-
-				HANDLE hFile = ::CreateFileW(wszDumpPath, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
-					NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-				if (hFile == INVALID_HANDLE_VALUE)
+				DWORD dwLen = ::GetTempPathW(MAX_PATH + 1, _dumppath.data()); // always normalized with backslash at the end
+				if (dwLen == 0) // GetTempPath cannot return more than MAX_PATH+1
 				{
-					wsprintfW(wszScratch, L"Failed to create dump file '%s' (error %d)!", wszDumpPath, ::GetLastError());
-					wszResult = wszScratch;
+					_msg = L"Failed to get TEMP location for the dump file output! (error " + std::to_wstring(::GetLastError()) + L")";
 				}
 				else
 				{
-					_MINIDUMP_EXCEPTION_INFORMATION ExInfo{};
-					ExInfo.ThreadId = ::GetCurrentThreadId();
-					ExInfo.ExceptionPointers = pExceptionInfo;
-					ExInfo.ClientPointers = FALSE;
+					int nWCharsWritten = wsprintfW(_dumppath.data() + dwLen, L"%s_%04u%02u%02u_%02u%02u%02u%s",
+						nppDumpName,
+						stExc.wYear, stExc.wMonth, stExc.wDay, stExc.wHour, stExc.wMinute, stExc.wSecond,
+						nppDumpExt);
 
-					// write the dump
-					if (pfnDump(::GetCurrentProcess(), ::GetCurrentProcessId(), hFile, MiniDumpNormal, &ExInfo, NULL, NULL))
+					if (nWCharsWritten == nppDumpPathEndingLen)
+						_dumppath.resize(dwLen + nWCharsWritten);
+					else
+						_dumppath.resize(dwLen);
+
+					HANDLE hFile = ::CreateFileW(_dumppath.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+						NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+					if (hFile == INVALID_HANDLE_VALUE)
 					{
-						wsprintfW(wszScratch, L"Successfully saved the dump file to:\r\n'%s'", wszDumpPath);
-						wszResult = wszScratch;
-						retval = true;
+						_msg = L"Failed to create dump file (error " + std::to_wstring(::GetLastError()) + L"):\r\n'" + _dumppath + L"'";
 					}
 					else
 					{
-						wsprintfW(wszScratch, L"Failed to save dump file to '%s' (error %d)!", wszDumpPath, ::GetLastError());
-						wszResult = wszScratch;
+						_MINIDUMP_EXCEPTION_INFORMATION ExInfo{};
+						ExInfo.ThreadId = ::GetCurrentThreadId();
+						ExInfo.ExceptionPointers = pExceptionInfo;
+						ExInfo.ClientPointers = FALSE;
+
+						// write the dump
+						if (pfnDump(::GetCurrentProcess(), ::GetCurrentProcessId(), hFile, MiniDumpNormal, &ExInfo, NULL, NULL))
+						{
+							_msg = L"Successfully saved the dump to file:\r\n'" + _dumppath + L"'";
+							retval = true;
+						}
+						else
+						{
+							_msg = L"Failed to write dump into file (error " + std::to_wstring(::GetLastError()) + L"):\r\n'" + _dumppath + L"'";
+						}
+
+						::CloseHandle(hFile);
 					}
-					::CloseHandle(hFile);
 				}
 			}
 		}
@@ -108,8 +118,8 @@ bool MiniDumper::writeDump(EXCEPTION_POINTERS* pExceptionInfo, SYSTEMTIME stExc)
 		::FreeLibrary(hDll);
 	}
 
-	if (wszResult)
-		::MessageBoxW(NULL, wszResult, msgTitle, retval ? (MB_OK | MB_ICONINFORMATION) : (MB_OK | MB_ICONWARNING));
+	if (lstrlenW(_msg.c_str()) > 0) // do not use _msg.empty() here
+		::MessageBoxW(NULL, _msg.c_str(), msgTitle, retval ? (MB_OK | MB_ICONINFORMATION) : (MB_OK | MB_ICONWARNING));
 
 	return retval;
 }

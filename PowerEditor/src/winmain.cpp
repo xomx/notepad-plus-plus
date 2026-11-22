@@ -394,7 +394,7 @@ void doException(Notepad_plus_Window& notepad_plus_plus, SYSTEMTIME stExc)
 		MB_OK | MB_ICONINFORMATION);
 
 	wchar_t wszBuf[MAX_PATH + 1]{};
-	::GetTempPath(MAX_PATH, wszBuf); // always normalized with backslash at the end
+	::GetTempPathW(MAX_PATH, wszBuf); // always normalized with backslash at the end
 	std::wstring emergencySavedDir = wszBuf;
 	emergencySavedDir += L"Notepad++_RECOVERY_";
 	wsprintfW(wszBuf, L"%04u%02u%02u_%02u%02u%02u",

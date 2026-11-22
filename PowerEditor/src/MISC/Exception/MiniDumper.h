@@ -21,10 +21,14 @@
 #pragma once
 
 #include <windows.h>
+#include <string>
 
 class MiniDumper {
 public:
 	MiniDumper();
 	bool writeDump(EXCEPTION_POINTERS* pExceptionInfo, SYSTEMTIME stExc);
+private:
+	std::wstring _dumppath;
+	std::wstring _msg;
 };
 
