@@ -21,19 +21,10 @@
 #pragma once
 
 #include <windows.h>
-#include <dbghelp.h>
-
-
-// based on dbghelp.h
-typedef BOOL (WINAPI *MINIDUMPWRITEDUMP)(HANDLE hProcess, DWORD dwPid, HANDLE hFile, MINIDUMP_TYPE DumpType,
-									const PMINIDUMP_EXCEPTION_INFORMATION ExceptionParam,
-									const PMINIDUMP_USER_STREAM_INFORMATION UserStreamParam,
-									const PMINIDUMP_CALLBACK_INFORMATION CallbackParam
-									);
 
 class MiniDumper {
 public:
 	MiniDumper();
-	bool writeDump(EXCEPTION_POINTERS * pExceptionInfo);
+	bool writeDump(EXCEPTION_POINTERS* pExceptionInfo, SYSTEMTIME stExc);
 };
 

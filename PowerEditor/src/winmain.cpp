@@ -385,25 +385,34 @@ const wchar_t FLAG_PLUGIN_MESSAGE[] = L"-pluginMessage=";
 const wchar_t FLAG_MONITOR_FILES[] = L"-monitor";
 const wchar_t FLAG_MONITORING_MODE[] = L"-monitoringMode";
 
-void doException(Notepad_plus_Window & notepad_plus_plus)
+void doException(Notepad_plus_Window& notepad_plus_plus, SYSTEMTIME stExc)
 {
-	Win32Exception::removeHandler();	//disable exception handler after exception, we don't want corrupt data structures to crash the exception handler
-	::MessageBox(Notepad_plus_Window::gNppHWND, L"Notepad++ will attempt to save any unsaved data. However, data loss is very likely.", L"Recovery initiating", MB_OK | MB_ICONINFORMATION);
+	Win32Exception::removeHandler(); // disable exception handler after exception, we don't want corrupt data structures to crash the exception handler
+	::MessageBoxW(Notepad_plus_Window::gNppHWND,
+		L"Notepad++ will attempt to save any unsaved data.\r\nHowever, data loss is very likely.",
+		L"Recovery initiating",
+		MB_OK | MB_ICONINFORMATION);
 
-	wchar_t tmpDir[1024];
-	GetTempPath(1024, tmpDir);
-	std::wstring emergencySavedDir = tmpDir;
-	emergencySavedDir += L"\\Notepad++ RECOV";
+	wchar_t wszBuf[MAX_PATH + 1]{};
+	::GetTempPath(MAX_PATH, wszBuf); // always normalized with backslash at the end
+	std::wstring emergencySavedDir = wszBuf;
+	emergencySavedDir += L"Notepad++_RECOVERY_";
+	wsprintfW(wszBuf, L"%04u%02u%02u_%02u%02u%02u",
+		stExc.wYear, stExc.wMonth, stExc.wDay, stExc.wHour, stExc.wMinute, stExc.wSecond);
+	emergencySavedDir += wszBuf;
 
 	bool res = notepad_plus_plus.emergency(emergencySavedDir);
 	if (res)
 	{
-		std::wstring displayText = L"Notepad++ was able to successfully recover some unsaved documents, or nothing to be saved could be found.\r\nYou can find the results at :\r\n";
-		displayText += emergencySavedDir;
-		::MessageBox(Notepad_plus_Window::gNppHWND, displayText.c_str(), L"Recovery success", MB_OK | MB_ICONINFORMATION);
+		std::wstring displayText = L"Notepad++ was able to successfully recover some unsaved documents, or nothing to be saved could be found.\r\n\r\nYou can find the results at:\r\n'";
+		displayText += emergencySavedDir + L"\\'";
+		::MessageBoxW(Notepad_plus_Window::gNppHWND, displayText.c_str(), L"Recovery success", MB_OK | MB_ICONINFORMATION);
 	}
 	else
-		::MessageBox(Notepad_plus_Window::gNppHWND, L"Unfortunately, Notepad++ was not able to save your work. We are sorry for any lost data.", L"Recovery failure", MB_OK | MB_ICONERROR);
+	{
+		::MessageBoxW(Notepad_plus_Window::gNppHWND,
+			L"Unfortunately, Notepad++ was not able to save your work. We are sorry for any lost data.", L"Recovery failure", MB_OK | MB_ICONERROR);
+	}
 }
 
 // Looks for -z arguments and strips command line arguments following those, if any
@@ -996,8 +1005,13 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE /*hPrevInstance
 	MSG msg{};
 	msg.wParam = 0;
 	Win32Exception::installHandler();
-	MiniDumper mdump;	//for debugging purposes.
+	MiniDumper mdump; // for debugging purposes
 	bool isException = false;
+	int iExceptionCode = 0;
+	static constexpr int EXC_CODE_CPP =	static_cast<int>(0xE06D7363u);
+	static constexpr int EXC_CODE_UNKNOWN = static_cast<int>(0xC0000001u); // STATUS_UNSUCCESSFUL (better here than STATUS_UNHANDLED_EXCEPTION 0xC0000144)
+	SYSTEMTIME stException{};
+	wchar_t wszExcMsg[1024]{};
 	try {
 		notepad_plus_plus.init(hInstance, NULL, quotFileNames.c_str(), &cmdLineParams);
 		allowForbidPrivilegeMessages(notepad_plus_plus, ver);
@@ -1021,41 +1035,48 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE /*hPrevInstance
 	}
 	catch (int i)
 	{
+		::GetLocalTime(&stException);
 		isException = true;
-		wchar_t str[50] = L"God Damned Exception:";
-		wchar_t code[10];
-		wsprintf(code, L"%d", i);
-		wcscat_s(str, code);
-		::MessageBox(Notepad_plus_Window::gNppHWND, str, L"Int Exception", MB_OK);
-		doException(notepad_plus_plus);
+		iExceptionCode = i;
+		wsprintfW(wszExcMsg, L"God Damned Exception: %d", i);
+		::MessageBoxW(Notepad_plus_Window::gNppHWND, wszExcMsg, L"Notepad++ Int Exception", MB_OK | MB_ICONERROR);
+		doException(notepad_plus_plus, stException);
 	}
-	catch (std::runtime_error & ex)
+	catch (std::runtime_error& ex)
 	{
+		::GetLocalTime(&stException);
 		isException = true;
-		::MessageBoxA(Notepad_plus_Window::gNppHWND, ex.what(), "Runtime Exception", MB_OK);
-		doException(notepad_plus_plus);
+		iExceptionCode = EXC_CODE_CPP;
+		::MessageBoxA(Notepad_plus_Window::gNppHWND, ex.what(), "Notepad++ Runtime Exception", MB_OK | MB_ICONERROR);
+		doException(notepad_plus_plus, stException);
 	}
-	catch (const Win32Exception & ex)
+	catch (const Win32Exception& ex)
 	{
+		::GetLocalTime(&stException);
 		isException = true;
-		wchar_t message[1024];
-		wsprintf(message, L"An exception occurred. Notepad++ cannot recover and must be shut down.\r\nThe exception details are as follows:\r\n"
+		iExceptionCode = static_cast<int>(ex.code());
+		wsprintfW(wszExcMsg, L"An exception occurred. Notepad++ cannot recover and must be shut down!\r\n\r\nThe exception details are as follows:\r\n"
 			L"Code:\t0x%08X\r\nType:\t%S\r\nException address: 0x%p", ex.code(), ex.what(), ex.where());
-		::MessageBox(Notepad_plus_Window::gNppHWND, message, L"Win32Exception", MB_OK | MB_ICONERROR);
-		mdump.writeDump(ex.info());
-		doException(notepad_plus_plus);
+		::MessageBoxW(Notepad_plus_Window::gNppHWND, wszExcMsg, L"Notepad++ Win32Exception", MB_OK | MB_ICONERROR);
+		mdump.writeDump(ex.info(), stException);
+		doException(notepad_plus_plus, stException);
 	}
-	catch (std::exception & ex)
+	catch (std::exception& ex)
 	{
+		::GetLocalTime(&stException);
 		isException = true;
-		::MessageBoxA(Notepad_plus_Window::gNppHWND, ex.what(), "General Exception", MB_OK);
-		doException(notepad_plus_plus);
+		iExceptionCode = EXC_CODE_CPP;
+		::MessageBoxA(Notepad_plus_Window::gNppHWND, ex.what(), "Notepad++ General Exception", MB_OK | MB_ICONERROR);
+		doException(notepad_plus_plus, stException);
 	}
 	catch (...) // this shouldn't ever have to happen
 	{
+		::GetLocalTime(&stException);
 		isException = true;
-		::MessageBoxA(Notepad_plus_Window::gNppHWND, "An exception that we did not yet found its name is just caught", "Unknown Exception", MB_OK);
-		doException(notepad_plus_plus);
+		iExceptionCode = EXC_CODE_UNKNOWN;
+		::MessageBoxW(Notepad_plus_Window::gNppHWND, L"An exception that we did not yet found its name is just caught!",
+			L"Notepad++ Unknown Exception", MB_OK | MB_ICONERROR);
+		doException(notepad_plus_plus, stException);
 	}
 
 	doUpdateNpp = nppGui._autoUpdateOpt._doAutoUpdate != NppGUI::autoupdate_disabled; // refresh, maybe user activated these opts in Preferences
@@ -1070,5 +1091,5 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE /*hPrevInstance
 		}
 	}
 
-	return static_cast<int>(msg.wParam);
+	return isException ? iExceptionCode : static_cast<int>(msg.wParam);
 }
